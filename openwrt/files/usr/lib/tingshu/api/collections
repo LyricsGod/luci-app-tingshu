@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# 听书 · 合集同步接口（uhttpd CGI）
+#
+#   GET  /cgi-ts/collections        → {"ok":true,"data":{...}}
+#   POST /cgi-ts/collections        → body: c=<urlencoded JSON>（整个合集列表）
+#
+# 数据放在 /etc/tingshu/collections.json（overlay，重启不丢）
+# 合集数量少、且总是整体读写，所以用单个文件存整个列表。
+
+DATA_FILE="${TINGSHU_COLLECTIONS_FILE:-/etc/tingshu/collections.json}"
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+param() {
+	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+# %E4%B8%89 -> 三（printf 的 \xHH）
+urldecode() {
+	printf '%b' "$(printf '%s' "$1" | sed 's/%/\\x/g')"
+}
+
+method="${REQUEST_METHOD:-GET}"
+
+if [ "$method" = "POST" ]; then
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) len=0 ;; esac
+	body=""
+	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+
+	c="$(urldecode "$(param "$body" c)")"
+
+	# 空/非法 JSON 拒绝（必须 { 开头 } 结尾，或 [ 开头 ] 结尾）
+	case "$c" in
+		'{'*'}'|'['*']') ;;
+		*) hdr; printf '{"ok":false,"error":"bad payload"}\n'; exit 0 ;;
+	esac
+
+	# 大小上限 256KB，防止塞垃圾
+	[ ${#c} -le 262144 ] || { hdr; printf '{"ok":false,"error":"too large"}\n'; exit 0; }
+
+	dir="$(dirname "$DATA_FILE")"
+	mkdir -p "$dir" 2>/dev/null
+	tmp="$DATA_FILE.$$"
+	printf '%s' "$c" > "$tmp" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr
+		printf '{"ok":false,"error":"write failed"}\n'
+		exit 0
+	fi
+	mv -f "$tmp" "$DATA_FILE" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr
+		printf '{"ok":false,"error":"rename failed"}\n'
+		exit 0
+	fi
+
+	hdr
+	printf '{"ok":true}\n'
+	exit 0
+fi
+
+# ---- GET ----
+hdr
+if [ -f "$DATA_FILE" ]; then
+	printf '{"ok":true,"data":'
+	cat "$DATA_FILE"
+	printf '}\n'
+else
+	printf '{"ok":true,"data":{}}\n'
+fi
+exit 0

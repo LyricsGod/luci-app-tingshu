@@ -36,6 +36,7 @@ EXEC_FILES = {
     'usr/lib/tingshu/scan.sh',
     'usr/lib/tingshu/api/progress',
     'usr/lib/tingshu/api/manage',
+    'usr/lib/tingshu/api/collections',
 }
 
 CONFFILES = ['/etc/config/tingshu']
