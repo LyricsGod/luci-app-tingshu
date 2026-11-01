@@ -14,9 +14,11 @@ MEDIA=$WWW_DIR/media
 # 把静态文件复制到可写的 tmpfs，顺便腾出位置放 library.json 和 media
 prepare_www() {
 	mkdir -p "$WWW_DIR"
+	chmod 755 "$WWW_DIR"
 	for f in "$SRC_WWW"/*; do
 		[ -e "$f" ] || continue
 		cp -f "$f" "$WWW_DIR/$(basename "$f")" 2>/dev/null
+		chmod 644 "$WWW_DIR/$(basename "$f")" 2>/dev/null
 	done
 	# 每次启动给静态资源加版本号，避免浏览器缓存旧版（uhttpd 无 no-cache 选项）
 	_ver=$(date +%s)
@@ -26,6 +28,7 @@ prepare_www() {
 	        s#@BOOT@#$_ver#g; s#@BUILD@#$_date#g" "$WWW_DIR/index.html" 2>/dev/null
 	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步
 	mkdir -p "$WWW_DIR/cgi-ts"
+	chmod 755 "$WWW_DIR/cgi-ts"
 	for api in progress manage collections meta; do
 		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
@@ -34,6 +37,8 @@ prepare_www() {
 	mkdir -p /etc/tingshu/progress
 	# 告诉扫描脚本往哪个目录写索引
 	TINGSHU_WWW_DIR="$WWW_DIR" /usr/lib/tingshu/scan.sh >/dev/null 2>&1
+	# 扫描脚本可能也用 600 写 library.json，统一修正权限
+	chmod 644 "$WWW_DIR/library.json" 2>/dev/null
 }
 
 # 安全地解除 media 上的挂载/软链（绝不在挂载状态下 rm -rf）
