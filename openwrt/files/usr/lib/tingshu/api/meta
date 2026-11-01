@@ -1,0 +1,85 @@
+#!/bin/sh
+#
+# 听书 · 书籍元数据同步接口（uhttpd CGI）
+#   书名 / 简介 / 配色 / 封面，多端同步
+#
+#   GET  /cgi-ts/meta           → {"ok":true,"items":{"<hexId>":{...}}}
+#   GET  /cgi-ts/meta?b=<hexId> → 单本
+#   POST /cgi-ts/meta           → body 是 JSON：{id:<hexId>,title,desc,palette,cover(base64),coverType,updatedAt}
+#
+# 数据放在 /etc/tingshu/meta/<hexId>.json（overlay，重启不丢）
+# 封面以 base64 存进 json（书籍封面通常几百 KB，可接受）
+
+DATA_DIR="${TINGSHU_META_DIR:-/etc/tingshu/meta}"
+mkdir -p "$DATA_DIR" 2>/dev/null
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+param() {
+	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+method="${REQUEST_METHOD:-GET}"
+
+if [ "$method" = "POST" ]; then
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) len=0 ;; esac
+	[ "$len" -gt 2097152 ] && { hdr; printf '{"ok":false,"error":"too large"}\n'; exit 0; }  # 上限 2MB
+
+	body=""
+	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+
+	# 校验 id 是安全 hex
+	id="$(printf '%s' "$body" | sed -n 's/.*"id":"\([0-9a-f]*\)".*/\1/p')"
+	case "$id" in ''|*[!0-9a-f]*) hdr; printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	[ ${#id} -le 400 ] || { hdr; printf '{"ok":false,"error":"id too long"}\n'; exit 0; }
+
+	tmp="$DATA_DIR/.$id.$$"
+	printf '%s' "$body" > "$tmp" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr; printf '{"ok":false,"error":"write failed"}\n'; exit 0
+	fi
+	mv -f "$tmp" "$DATA_DIR/$id.json" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr; printf '{"ok":false,"error":"rename failed"}\n'; exit 0
+	fi
+
+	hdr; printf '{"ok":true}\n'; exit 0
+fi
+
+# ---- GET ----
+one="$(param "${QUERY_STRING:-}" b)"
+hdr
+
+if [ -n "$one" ]; then
+	case "$one" in *[!0-9a-f]*) printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	if [ -f "$DATA_DIR/$one.json" ]; then
+		printf '{"ok":true,"items":{"%s":' "$one"
+		cat "$DATA_DIR/$one.json"
+		printf '}}\n'
+	else
+		printf '{"ok":true,"items":{}}\n'
+	fi
+	exit 0
+fi
+
+printf '{"ok":true,"items":{'
+first=1
+for f in "$DATA_DIR"/*.json; do
+	[ -f "$f" ] || continue
+	k="${f##*/}"; k="${k%.json}"
+	case "$k" in ''|*[!0-9a-f]*) continue ;; esac
+	[ $first -eq 1 ] || printf ','
+	first=0
+	printf '"%s":' "$k"
+	cat "$f"
+done
+printf '}}\n'
+exit 0

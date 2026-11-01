@@ -20,7 +20,7 @@ prepare_www() {
 	done
 	# CGI 接口：进度同步 + 书库管理 + 合集同步
 	mkdir -p "$WWW_DIR/cgi-ts"
-	for api in progress manage collections; do
+	for api in progress manage collections meta; do
 		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 	done

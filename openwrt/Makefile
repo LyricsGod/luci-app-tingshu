@@ -69,6 +69,7 @@ define Package/luci-app-tingshu/install
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/progress $(1)/usr/lib/tingshu/api/progress
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/manage $(1)/usr/lib/tingshu/api/manage
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/collections $(1)/usr/lib/tingshu/api/collections
+	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/meta $(1)/usr/lib/tingshu/api/meta
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/tingshu $(1)/etc/init.d/tingshu

@@ -37,6 +37,7 @@ EXEC_FILES = {
     'usr/lib/tingshu/api/progress',
     'usr/lib/tingshu/api/manage',
     'usr/lib/tingshu/api/collections',
+    'usr/lib/tingshu/api/meta',
 }
 
 CONFFILES = ['/etc/config/tingshu']
@@ -61,6 +62,18 @@ def sync_web():
         src = os.path.join(BASE, name)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(dst_dir, name))
+
+    # 给 index.html 里的静态资源加版本号，避免浏览器缓存旧版 app.js/styles.css
+    html_path = os.path.join(dst_dir, 'index.html')
+    if os.path.exists(html_path):
+        with open(html_path, encoding='utf-8') as fh:
+            html = fh.read()
+        ver = str(int(time.time()))
+        html = html.replace('href="styles.css"', 'href="styles.css?v=%s"' % ver)
+        html = html.replace('src="app.js"', 'src="app.js?v=%s"' % ver)
+        with open(html_path, 'w', encoding='utf-8') as fh:
+            fh.write(html)
+        print('  已给 index.html 资源加版本号 v=%s' % ver)
 
 
 def collect():

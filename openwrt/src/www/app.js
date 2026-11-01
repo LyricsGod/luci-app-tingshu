@@ -1044,6 +1044,7 @@
       desc,
       palette: editState.palette,
       cover: editState.coverBlob || null,
+      updatedAt: Date.now(),
     };
 
     b.title = rec.title || b.folderTitle;
@@ -1072,6 +1073,8 @@
       return;
     }
 
+    // 同步到服务器（书名/简介/配色/封面，多端共享）
+    pushServerMeta(b);
     closeEditor();
     if (state.bookView && state.bookView.id === b.id) renderBookView(b);
     renderLibrary();
@@ -2464,6 +2467,135 @@
     return changed;
   }
 
+  /* ================= 书籍元数据云同步（书名/简介/配色/封面） ================= */
+
+  const META_API = 'cgi-ts/meta';
+  let metaSyncEnabled = false;
+  const metaPushedAt = new Map();
+
+  function metaOf(book) {
+    return {
+      title: book.title && book.title !== book.folderTitle ? book.title : '',
+      desc: book.desc || '',
+      palette: book.palette != null ? book.palette : null,
+      coverBlob: book.userCover || null,
+    };
+  }
+
+  /* 把一本书的元数据推到服务器 */
+  async function pushServerMeta(book) {
+    if (!book) return;
+    const now = Date.now();
+    if (now - (metaPushedAt.get(book.id) || 0) < 1000) return;
+    metaPushedAt.set(book.id, now);
+
+    try {
+      const m = metaOf(book);
+      let coverB64 = '';
+      let coverType = '';
+      if (m.coverBlob instanceof Blob) {
+        coverType = m.coverBlob.type || 'image/png';
+        coverB64 = await blobToBase64(m.coverBlob);
+      }
+      const payload = {
+        id: hexOf(book.id),
+        title: m.title,
+        desc: m.desc,
+        palette: m.palette,
+        cover: coverB64,
+        coverType,
+        updatedAt: now,
+      };
+
+      await fetch(META_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
+
+    } catch { /* 忽略同步失败 */ }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /* 启动时拉取所有书籍元数据，合并到本地 meta 表 */
+  async function pullServerMeta() {
+    let data;
+    try {
+      const res = await fetch(META_API + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return 0;
+      data = await res.json();
+    } catch { return 0; }
+    if (!data || data.ok !== true || !data.items) return 0;
+
+    metaSyncEnabled = true;
+    let changed = 0;
+
+    for (const hex in data.items) {
+      const rec = data.items[hex];
+      if (!rec || typeof rec !== 'object') continue;
+      const bookId = unhex(hex);
+      if (!bookId) continue;
+      if (!(rec.title || rec.desc || rec.palette != null || rec.cover)) continue;
+
+      // 本地 meta
+      let local = null;
+      try { local = await dbGet('meta', bookId); } catch { local = null; }
+      const remoteTs = Number(rec.updatedAt) || 0;
+      const localTs = local ? (Number(local.updatedAt) || 0) : 0;
+      if (local && localTs >= remoteTs) continue;
+
+      const merged = {
+        bookId,
+        title: rec.title || '',
+        desc: rec.desc || '',
+        palette: rec.palette != null ? rec.palette : null,
+        cover: null,
+        updatedAt: remoteTs,
+      };
+      if (rec.cover) {
+        try {
+          const bin = atob(rec.cover);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          merged.cover = new Blob([bytes], { type: rec.coverType || 'image/png' });
+        } catch { /* 封面解码失败就跳过 */ }
+      }
+
+      const empty = !merged.title && !merged.desc && merged.palette == null && !merged.cover;
+      if (empty) await dbDelete('meta', bookId).catch(() => {});
+      else await dbPut('meta', merged).catch(() => {});
+
+      // 立即应用到内存里的书
+      const book = state.books.find(b => b.id === bookId);
+      if (book) {
+        if (merged.title) book.title = merged.title;
+        if (merged.desc) book.desc = merged.desc;
+        if (merged.palette != null) book.palette = merged.palette;
+        if (merged.cover instanceof Blob) {
+          if (book.userCoverUrl) URL.revokeObjectURL(book.userCoverUrl);
+          book.userCover = merged.cover;
+          book.userCoverUrl = URL.createObjectURL(merged.cover);
+        }
+      }
+      changed++;
+    }
+
+    if (changed) {
+      renderLibrary();
+      if (state.bookView) renderBookView(state.bookView);
+    }
+    return changed;
+  }
+
   function ensureProgress(bookId) {
     let p = state.progress.get(bookId);
     if (!p) { p = { bookId, index: 0, time: 0, done: [], updatedAt: 0 }; state.progress.set(bookId, p); }
@@ -3427,9 +3559,10 @@
       }
     }
 
-    // 从路由器拉一次进度 + 合集，多端同步
+    // 从路由器拉一次进度 + 合集 + 书籍元数据，多端同步
     await pullServerProgress();
     await pullServerCollections();
+    await pullServerMeta();
 
     applyTheme();
     bind();
