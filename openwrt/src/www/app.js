@@ -2591,7 +2591,14 @@
       try { local = await dbGet('meta', bookId); } catch { local = null; }
       const remoteTs = Number(rec.updatedAt) || 0;
       const localTs = local ? (Number(local.updatedAt) || 0) : 0;
-      if (local && localTs >= remoteTs) continue;
+
+      // 合并判断：本地更「新」才跳过。
+      // 但设备时钟可能不一致，稳妥起见：只要内容有差异，就以服务器为准
+      // （服务器是多端汇聚点，通常是最权威的）。
+      const localDesc = local ? (local.desc || '') : '';
+      const remoteDesc = rec.desc || '';
+      const contentDiffers = localDesc !== remoteDesc || (local && (local.title || '') !== (rec.title || ''));
+      if (local && !contentDiffers && localTs >= remoteTs) continue;
 
       const merged = {
         bookId,
