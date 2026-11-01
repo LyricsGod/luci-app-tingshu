@@ -174,6 +174,7 @@
   };
 
   let objectUrl = null;
+  let currentBlob = null;   // 保住当前章节的 blob 引用，防止安卓后台 GC 后 blob URL 失效
   let loadToken = 0;
   let lastSaveAt = 0;
   let sleepTimer = null;
@@ -1530,7 +1531,12 @@
     dbPut('progress', prog).catch(() => {});
 
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
-    if (file) objectUrl = URL.createObjectURL(file);
+    if (file) {
+      currentBlob = file;                       // 保住引用，防止后台 GC
+      objectUrl = URL.createObjectURL(file);
+    } else {
+      currentBlob = null;
+    }
 
     const a = el.audio;
     a.src = objectUrl;
@@ -1566,11 +1572,32 @@
         if (err.name === 'NotAllowedError') {
           document.body.classList.add('is-paused');
           toast('再点一次播放按钮即可开始（浏览器要求先有一次点击）');
+        } else if (err.name === 'NotSupportedError' || err.name === 'InvalidStateError') {
+          // 安卓后台/锁屏后，blob 可能失效或音频元素状态异常。
+          // 重载当前章节再试一次，能救回来就不打扰用户。
+          reloadAndPlay();
         } else if (err.name !== 'AbortError') {
           console.error(err);
         }
       });
     }
+  }
+
+  // 音频源失效时重新加载当前章节并恢复播放
+  let reloadingPlay = false;
+  function reloadAndPlay() {
+    if (reloadingPlay || !state.current) return;
+    reloadingPlay = true;
+
+    const cur = state.current;
+    const idx = cur.index;
+    // 优先用已保存的进度；音频 src 被清掉后 currentTime 归 0，别把用户进度弄丢
+    const prog = state.progress.get(cur.book.id);
+    const time = (el.audio.currentTime > 1 ? el.audio.currentTime : (prog ? (prog.time || 0) : 0));
+
+    playFrom(cur.book, idx, { autoplay: true, time })
+      .then(() => { reloadingPlay = false; })
+      .catch(() => { reloadingPlay = false; toast('播放恢复失败，请重新点一下播放'); });
   }
 
   function togglePlay() {
@@ -2418,6 +2445,7 @@
     const map = {
       play: () => doPlay(),
       pause: () => el.audio.pause(),
+      stop: () => el.audio.pause(),
       previoustrack: () => prevTrack(),
       nexttrack: () => nextTrack(),
       seekbackward: (d) => { el.audio.currentTime = Math.max(0, el.audio.currentTime - (d.seekOffset || SEEK_STEP)); },
@@ -3042,6 +3070,7 @@
     el.audio.addEventListener('pause', () => {
       updatePlayState();
       saveProgress(false, true);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 
       // 正在等本节播完，但用户自己按了暂停 —— 目的已达到，收掉定时。
       // 注意：音频自然播完时浏览器会「先 pause 再 ended」，这里必须放过结尾那一刻，
@@ -3159,7 +3188,21 @@
       if (state.current) { saveProgress(); beaconProgress(); }
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && state.current) saveProgress(true, true);
+      if (document.hidden) {
+        if (state.current) saveProgress(true, true);
+      } else {
+        // 回到前台：安卓后台/锁屏可能把 blob 源回收掉。
+        // 音频没源了就用存的 blob 重建；blob 也没了就重新拉章节。
+        const a = el.audio;
+        if (!state.current) return;
+        if (!a.src && currentBlob) {
+          objectUrl = URL.createObjectURL(currentBlob);
+          a.src = objectUrl;
+          a.load();
+        } else if (!a.src && !currentBlob) {
+          reloadAndPlay();
+        }
+      }
     });
     window.addEventListener('scroll', () => {
       document.body.classList.toggle('scrolled', window.scrollY > 6);
