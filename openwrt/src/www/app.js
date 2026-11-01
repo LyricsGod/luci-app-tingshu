@@ -1336,16 +1336,29 @@
 
   function renderBookPicker(checked) {
     el.colPickList.innerHTML = '';
-    if (!state.books.length) {
+
+    // 新建合集时：已经在其它合集里的书不再显示（一本书只能属于一个合集）
+    // 编辑合集时：显示全部书，但已在其它合集的也置灰不可勾，避免重复加入
+    const isNew = !colEditState.id;
+    const books = sortedBooks().filter(book => {
+      if (checked.has(book.id)) return true;            // 本合集已选的书保留
+      if (isNew) {
+        // 新建：已在任何合集里的书直接排除
+        return !state.collections.some(c => (c.bookIds || []).includes(book.id));
+      }
+      return true;
+    });
+
+    if (!books.length) {
       const p = document.createElement('p');
       p.className = 'muted pick-none';
-      p.textContent = '书架还是空的，先打开书库吧';
+      p.textContent = isNew ? '书架上的书都已经收进合集了' : '书架还是空的，先打开书库吧';
       el.colPickList.appendChild(p);
       updatePickCount();
       return;
     }
 
-    sortedBooks().forEach(book => {
+    books.forEach(book => {
       const row = document.createElement('label');
       row.className = 'pick-item';
 
@@ -1353,6 +1366,15 @@
       cb.type = 'checkbox';
       cb.value = book.id;
       cb.checked = checked.has(book.id);
+
+      // 编辑合集时：已在其它合集的书显示但置灰，防止重复加入
+      const inOther = !checked.has(book.id) &&
+        state.collections.some(c => c.id !== colEditState.id && (c.bookIds || []).includes(book.id));
+      if (inOther) {
+        cb.disabled = true;
+        row.classList.add('is-disabled');
+        row.title = '已在另一个合集里';
+      }
 
       const cover = document.createElement('span');
       cover.className = 'book-cover pick-cover';
@@ -1396,6 +1418,7 @@
     };
     col.name = name;
     col.bookIds = bookIds;
+    touchCollection(col);
 
     try {
       await dbPut('collections', col);
@@ -1406,6 +1429,7 @@
     }
 
     if (!existing) state.collections.push(col);
+    pushServerCollections();
     closeCollectionEditor();
     renderLibrary();
     if (!el.collectionSheet.hidden && colState.id === col.id) renderCollectionView();
@@ -1419,6 +1443,7 @@
 
     try { await dbDelete('collections', col.id); } catch (err) { console.error(err); }
     state.collections = state.collections.filter(c => c.id !== col.id);
+    pushServerCollections();
     closeCollectionEditor();
     if (colState.id === col.id) {
       el.collectionSheet.hidden = true;
@@ -1472,7 +1497,9 @@
     const i = col.bookIds.indexOf(bookId);
     if (i >= 0) col.bookIds.splice(i, 1);
     else col.bookIds.push(bookId);
+    touchCollection(col);
     await dbPut('collections', col).catch(() => {});
+    pushServerCollections();
     renderLibrary();
     return i < 0;
   }
@@ -2208,9 +2235,11 @@
     state.collections.forEach(c => {
       if (Array.isArray(c.bookIds) && c.bookIds.includes(book.id)) {
         c.bookIds = c.bookIds.filter(id => id !== book.id);
+        touchCollection(c);
         dbPut('collections', c).catch(() => {});
       }
     });
+    pushServerCollections();
 
     closeEditor();
 
@@ -2352,6 +2381,87 @@
     el.sheetFoot.textContent = syncEnabled
       ? '进度已同步到路由器 · 换台设备也能接着听'
       : '进度已自动保存 · 关闭网页也不会丢';
+  }
+
+  /* ================= 合集云同步（服务器端） ================= */
+
+  const COL_API = 'cgi-ts/collections';
+  let colSyncEnabled = false;
+  let colPushTimer = null;
+
+  function touchCollection(col) {
+    col.updatedAt = Date.now();
+    return col;
+  }
+
+  /* 把整个合集列表推到服务器 */
+  function pushServerCollections() {
+    if (!colSyncEnabled) return;
+    // 合并小步操作，避免连续操作时疯狂发请求
+    clearTimeout(colPushTimer);
+    colPushTimer = setTimeout(() => {
+      const payload = state.collections.map(c => ({
+        id: c.id,
+        name: c.name,
+        bookIds: (c.bookIds || []).slice(),
+        createdAt: c.createdAt || 0,
+        updatedAt: c.updatedAt || c.createdAt || 0,
+      }));
+      const body = 'c=' + encodeURIComponent(JSON.stringify(payload));
+      fetch(COL_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    }, 400);
+  }
+
+  /* 启动时拉一次，按每个合集 updatedAt 取新的 */
+  async function pullServerCollections() {
+    let data;
+    try {
+      const res = await fetch(COL_API + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return 0;
+      data = await res.json();
+    } catch { return 0; }
+    if (!data || data.ok !== true) return 0;
+
+    colSyncEnabled = true;
+    const remote = Array.isArray(data.data) ? data.data : [];
+    if (!remote.length) return 0;
+
+    const localMap = new Map(state.collections.map(c => [c.id, c]));
+    let changed = 0;
+
+    for (const rec of remote) {
+      if (!rec || typeof rec !== 'object' || !rec.id) continue;
+      const local = localMap.get(rec.id);
+      const remoteTs = Number(rec.updatedAt) || Number(rec.createdAt) || 0;
+      const localTs = local ? (local.updatedAt || local.createdAt || 0) : 0;
+
+      if (local && localTs >= remoteTs) continue;   // 本地更新，保留
+
+      const merged = {
+        id: rec.id,
+        name: rec.name || '未命名合集',
+        bookIds: Array.isArray(rec.bookIds) ? rec.bookIds.filter(x => typeof x === 'string') : [],
+        createdAt: Number(rec.createdAt) || remoteTs,
+        updatedAt: remoteTs,
+      };
+
+      if (local) {
+        const i = state.collections.indexOf(local);
+        if (i >= 0) state.collections[i] = merged;
+      } else {
+        state.collections.push(merged);
+      }
+      dbPut('collections', merged).catch(() => {});
+      changed++;
+    }
+
+    if (changed) renderLibrary();
+    return changed;
   }
 
   function ensureProgress(bookId) {
@@ -3256,8 +3366,9 @@
       }
     }
 
-    // 从路由器拉一次进度，多端同步
+    // 从路由器拉一次进度 + 合集，多端同步
     await pullServerProgress();
+    await pullServerCollections();
 
     applyTheme();
     bind();
