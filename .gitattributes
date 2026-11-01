@@ -1,0 +1,10 @@
+# 仓库里统一 LF：脚本 shebang 一旦带 \r 就会失效
+* text=auto eol=lf
+
+# Windows 批处理必须是 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ipk binary

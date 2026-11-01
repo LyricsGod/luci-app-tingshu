@@ -1,0 +1,98 @@
+#!/bin/sh /etc/rc.common
+# 听书 · 局域网有声书书架
+# 用 uhttpd 的独立实例把 /tmp/tingshu/www 提供出去
+
+START=90
+STOP=10
+USE_PROCD=1
+
+RUN_DIR=/tmp/tingshu
+WWW_DIR=$RUN_DIR/www
+SRC_WWW=/usr/share/tingshu/www
+MEDIA=$WWW_DIR/media
+
+# 把静态文件复制到可写的 tmpfs，顺便腾出位置放 library.json 和 media
+prepare_www() {
+	mkdir -p "$WWW_DIR"
+	for f in "$SRC_WWW"/*; do
+		[ -e "$f" ] || continue
+		cp -f "$f" "$WWW_DIR/$(basename "$f")" 2>/dev/null
+	done
+	# CGI 接口：进度同步 + 书库管理（上传/删除/重扫）
+	mkdir -p "$WWW_DIR/cgi-ts"
+	for api in progress manage; do
+		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
+		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
+	done
+	# 进度数据放 overlay，重启不丢
+	mkdir -p /etc/tingshu/progress
+	# 告诉扫描脚本往哪个目录写索引
+	TINGSHU_WWW_DIR="$WWW_DIR" /usr/lib/tingshu/scan.sh >/dev/null 2>&1
+}
+
+# 安全地解除 media 上的挂载/软链（绝不在挂载状态下 rm -rf）
+unlink_media() {
+	if mount 2>/dev/null | grep -q " on $MEDIA "; then
+		umount "$MEDIA" 2>/dev/null
+	fi
+	if mount 2>/dev/null | grep -q " on $MEDIA "; then
+		logger -t tingshu "无法卸载 $MEDIA，跳过清理"
+		return 1
+	fi
+	rm -rf "$MEDIA"
+	return 0
+}
+
+# 优先用软链：uhttpd 会跟随，而且万一有人 rm -rf /tmp/*，只会删掉链接本身，
+# 不会穿透删掉用户的音频（bind mount 会，很危险）
+link_media() {
+	dir="$1"
+	unlink_media || return 1
+	ln -sfn "$dir" "$MEDIA" 2>/dev/null
+	return 0
+}
+
+start_service() {
+	config_load tingshu
+	local enabled port books_dir
+	config_get_bool enabled main enabled 1
+	config_get port main port 8686
+	config_get books_dir main books_dir /mnt/audiobooks
+
+	[ "$enabled" = "1" ] || {
+		logger -t tingshu "服务已禁用，跳过启动"
+		return 0
+	}
+
+	mkdir -p "$RUN_DIR"
+	prepare_www
+	link_media "$books_dir"
+
+	procd_open_instance
+	# 不用 -c 配置文件：各发行版的 uhttpd 配置格式不一致，命令行参数最稳
+	# -x /cgi-ts：把 /cgi-ts/* 交给 CGI，用于进度同步
+	procd_set_param command /usr/sbin/uhttpd -f -h "$WWW_DIR" -p "0.0.0.0:$port" -I index.html -D -x /cgi-ts
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+
+	logger -t tingshu "已启动，端口 $port，书架目录 $books_dir"
+}
+
+stop_service() {
+	if unlink_media; then
+		rm -rf "$RUN_DIR"
+	else
+		rm -f "$WWW_DIR/library.json"
+	fi
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger "tingshu"
+}

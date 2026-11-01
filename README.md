@@ -1,1 +1,118 @@
-# luci-app-tingshu
+# 听书 · OpenWrt 局域网有声书
+
+把路由器上的有声书目录变成一个网页书架。手机、平板、电脑在局域网里用浏览器打开就能听，不用装 App。
+
+界面是一个纯前端单页应用（无依赖、无构建），打包成 OpenWrt 的 ipk，附带 LuCI 管理页面。
+
+```
+浏览器 ──HTTP──> uhttpd(独立实例) ──> /tmp/tingshu/www  静态页面
+                                    └─> /cgi-ts/*       书库索引 + 进度同步
+                                    └─> media -> /mnt/... 音频目录
+```
+
+## 功能
+
+- **书架**：按文件夹自动分书，封面可以是文件夹里的图，也可以自己传或选配色
+- **播放**：断点续播、±30 秒、0.5×–3× 倍速、定时关闭（15 分钟到 90 分钟，或「播完本章」）
+- **进度**：存在路由器上，多台设备自动同步；也能导出/导入 JSON 备份
+- **合集**：像手机桌面文件夹一样，把几本书收进一个盒子，顺序可拖动调整
+- **管理**：网页里直接上传书籍（文件夹或 zip / tar.gz）、删除书籍，不用进文件管理
+
+## 安装
+
+去 [Releases](../../releases) 下载最新的 `luci-app-tingshu_x.y.z-r_all.ipk`，传到路由器：
+
+```sh
+opkg update
+opkg install /tmp/luci-app-tingshu_1.0.0-1_all.ipk
+```
+
+装完自动启用并启动服务。打开 **服务 → 听书** 配置。
+
+> 依赖 `uhttpd` 和 `luci-base`，正常装了 LuCI 的固件都有。
+
+## 配置
+
+| 项 | 说明 |
+|---|---|
+| 网页端口 | 默认 `8686`，浏览器访问 `http://路由器IP:8686/` |
+| 书架目录 | 有声书所在路径，默认 `/mnt/audiobooks`。每个子文件夹是一本书 |
+| 重新扫描书库 | 手动加了文件后点一下 |
+
+书这样放：
+
+```
+/mnt/audiobooks/
+├── 三体/
+│   ├── 01 地球往事.mp3
+│   ├── 02 红岸之谜.mp3
+│   └── cover.jpg        ← 可选，会自动当封面
+└── 明朝那些事儿/
+    └── 01 洪武大帝.mp3
+```
+
+支持 mp3 / m4a / m4b / aac / ogg / opus / flac / wav / webm。
+
+## 数据在哪
+
+| 数据 | 位置 |
+|---|---|
+| 书库索引 | `/tmp/tingshu/www/library.json`（重启自动重建） |
+| 听书进度 | `/etc/tingshu/progress/<hex>.json`（重装系统前记得备份） |
+| 书名/封面/合集 | 存在各设备浏览器的 IndexedDB 里 |
+
+进度导出入口：网页顶栏的下载图标 → 导出 JSON。
+
+## 自己编译
+
+**方式一：直接打包（不需要 SDK）**
+
+```sh
+python3 build_ipk.py        # 产物在 dist/
+```
+
+**方式二：用 OpenWrt SDK**
+
+```sh
+cp -r openwrt package/luci-app-tingshu
+make package/luci-app-tingshu/compile V=s
+```
+
+推送到 `main` 或打 `v*` 标签会触发 GitHub Actions 自动打包；打标签时还会自动发 Release。
+
+## 本地预览
+
+网页是纯静态的，直接起个静态服务器就能看（只是没有服务端书库，需要手动选本机文件夹）：
+
+```sh
+python -m http.server 8765
+# 打开 http://127.0.0.1:8765
+```
+
+Windows 用户也可以双击 `启动听书.bat`。
+
+## 目录结构
+
+```
+index.html / app.js / styles.css     网页本体
+openwrt/
+  Makefile                           包 Makefile（SDK 用）
+  files/                             装进路由器的文件
+    etc/config/tingshu               UCI 配置
+    etc/init.d/tingshu               procd 服务
+    usr/lib/tingshu/scan.sh          扫目录生成 library.json
+    usr/lib/tingshu/api/progress     进度读写 CGI
+    usr/lib/tingshu/api/manage       上传/删除/重扫 CGI
+  htdocs/.../view/tingshu/main.js    LuCI 页面
+build_ipk.py                         不依赖 SDK 的打包脚本
+```
+
+## 已知限制
+
+- 进度时间戳用的是各设备自己的时钟，多台设备都正常对时就没问题
+- zip 是在浏览器里解的（路由器上的 unzip 会把中文名转成 GBK），需要 Chrome 80+ / Edge / Safari 16.4+
+- 端口只开在局域网，WAN 侧被防火墙挡住；要外网访问建议走 VPN 或反向代理
+
+## License
+
+MIT

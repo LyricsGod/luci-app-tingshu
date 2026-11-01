@@ -1,0 +1,13 @@
+{
+	"admin/services/tingshu": {
+		"title": "听书",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "tingshu/main"
+		},
+		"depends": {
+			"acl": [ "luci-app-tingshu" ]
+		}
+	}
+}

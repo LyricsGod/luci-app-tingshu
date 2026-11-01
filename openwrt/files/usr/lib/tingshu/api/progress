@@ -1,0 +1,99 @@
+#!/bin/sh
+#
+# 听书 · 进度同步接口（uhttpd CGI）
+#
+#   GET  /cgi-ts/progress            → {"ok":true,"items":{"<hexId>":{...}}}
+#   GET  /cgi-ts/progress?b=<hexId>  → 单本
+#   POST /cgi-ts/progress            → body: b=<hexId>&i=<章>&t=<秒>&d=<0,1>&u=<时间戳>
+#
+# 数据放在 /etc/tingshu/progress/<hexId>.json（overlay，重启不丢）
+# 书 id 由前端转成十六进制，这里只接受 [0-9a-f]，避免任何路径/注入问题。
+
+DATA_DIR="${TINGSHU_PROGRESS_DIR:-/etc/tingshu/progress}"
+mkdir -p "$DATA_DIR" 2>/dev/null
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+# 从 a=1&b=2 中取出某个键的值
+param() {
+	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+method="${REQUEST_METHOD:-GET}"
+
+if [ "$method" = "POST" ]; then
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) len=0 ;; esac
+	body=""
+	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+
+	b="$(param "$body" b)"
+	i="$(param "$body" i)"
+	t="$(param "$body" t)"
+	d="$(param "$body" d)"
+	u="$(param "$body" u)"
+
+	# 只允许安全字符
+	case "$b" in ''|*[!0-9a-f]*) hdr; printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	[ ${#b} -le 400 ] || { hdr; printf '{"ok":false,"error":"id too long"}\n'; exit 0; }
+	case "$i" in ''|*[!0-9]*) hdr; printf '{"ok":false,"error":"bad index"}\n'; exit 0 ;; esac
+	case "$t" in ''|*[!0-9.]*) hdr; printf '{"ok":false,"error":"bad time"}\n'; exit 0 ;; esac
+	case "$u" in ''|*[!0-9]*) hdr; printf '{"ok":false,"error":"bad ts"}\n'; exit 0 ;; esac
+	case "$d" in *[!0-9,]*) hdr; printf '{"ok":false,"error":"bad done"}\n'; exit 0 ;; esac
+
+	tmp="$DATA_DIR/.$b.$$"
+	printf '{"index":%s,"time":%s,"done":[%s],"updatedAt":%s}' "$i" "$t" "$d" "$u" > "$tmp" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr
+		printf '{"ok":false,"error":"write failed"}\n'
+		exit 0
+	fi
+	mv -f "$tmp" "$DATA_DIR/$b.json" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr
+		printf '{"ok":false,"error":"rename failed"}\n'
+		exit 0
+	fi
+
+	hdr
+	printf '{"ok":true}\n'
+	exit 0
+fi
+
+# ---- GET ----
+one="$(param "${QUERY_STRING:-}" b)"
+hdr
+
+if [ -n "$one" ]; then
+	case "$one" in *[!0-9a-f]*) printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	if [ -f "$DATA_DIR/$one.json" ]; then
+		printf '{"ok":true,"items":{"%s":' "$one"
+		cat "$DATA_DIR/$one.json"
+		printf '}}\n'
+	else
+		printf '{"ok":true,"items":{}}\n'
+	fi
+	exit 0
+fi
+
+printf '{"ok":true,"items":{'
+first=1
+for f in "$DATA_DIR"/*.json; do
+	[ -f "$f" ] || continue
+	k="${f##*/}"
+	k="${k%.json}"
+	case "$k" in ''|*[!0-9a-f]*) continue ;; esac
+	[ $first -eq 1 ] || printf ','
+	first=0
+	printf '"%s":' "$k"
+	cat "$f"
+done
+printf '}}\n'
+exit 0

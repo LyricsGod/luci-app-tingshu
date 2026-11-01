@@ -1,0 +1,13 @@
+{
+  "name": "听书 · 本地离线书架",
+  "short_name": "听书",
+  "description": "离线播放本机文件夹里的有声书，自动记忆进度，支持倍速与定时关闭。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14120f",
+  "theme_color": "#14120f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

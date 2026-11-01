@@ -1,0 +1,12 @@
+# 依赖产物
+dist/
+build/
+*.ipk
+
+# 本地测试用
+_tmp_audio/
+.workbuddy/
+
+# 系统
+.DS_Store
+Thumbs.db

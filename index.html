@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>听书 · 本地离线书架</title>
+<meta name="theme-color" content="#14120f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true"><span>书</span></div>
+    <div class="brand-text">
+      <h1>听书</h1>
+      <p>本地离线书架</p>
+    </div>
+  </div>
+
+  <div class="topbar-actions">
+    <label class="search-wrap" for="searchInput">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+      <input id="searchInput" type="search" placeholder="搜索书名" autocomplete="off" spellcheck="false">
+    </label>
+    <button id="backupBtn" class="icon-btn" title="进度备份 / 恢复" aria-label="进度备份">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M8 10.5l4 4 4-4M4.8 16.5v2.2a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-2.2"/></svg>
+    </button>
+    <button id="themeBtn" class="icon-btn" title="切换日间 / 夜间" aria-label="切换主题">
+      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.2 8.2 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg>
+      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 12H2M22 12h-2.2M5.6 5.6 7.2 7.2M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
+    </button>
+    <button id="pickBtn" class="btn primary" title="上传书籍到书架">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.5V4.8M7.6 9 12 4.6 16.4 9M4.8 15v3.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6V15"/></svg>
+      <span>上传</span>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 书架 ============ -->
+  <section id="libraryView" class="view">
+    <div id="resumeHero" class="hero" hidden></div>
+
+    <div class="shelf-head">
+      <h2 id="shelfTitle">我的书架</h2>
+      <div class="shelf-tools">
+        <span id="shelfCount" class="muted"></span>
+        <button id="newCollectionBtn" class="btn ghost small" title="把几本书收成一个合集">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17Z"/><path d="M11.5 12v4M9.5 14h4"/></svg>
+          新建合集
+        </button>
+        <button id="sortBtn" class="btn ghost small" title="切换排序">最近收听</button>
+      </div>
+    </div>
+
+    <div id="bookGrid" class="book-grid"></div>
+
+    <div id="emptyState" class="empty" hidden>
+      <div class="empty-art" aria-hidden="true">
+        <div class="stack s1"></div><div class="stack s2"></div><div class="stack s3"></div>
+      </div>
+      <h2>还没有书，先选一个文件夹</h2>
+      <p class="empty-desc">把 MP3 放进以书名命名的文件夹，然后点右上角「打开书库」，选择这个总文件夹即可。文件不会上传，全部在本机播放。</p>
+      <pre class="tree">我的听书库/
+├─ 三体/
+│   ├─ 001 地球往事.mp3
+│   └─ 002 红岸.mp3
+└─ 明朝那些事儿/
+    └─ 01.mp3</pre>
+      <button id="emptyPickBtn" class="btn primary large">选择书库文件夹</button>
+      <p id="compatNote" class="muted tiny" hidden></p>
+    </div>
+  </section>
+
+  <!-- ============ 书籍详情 ============ -->
+  <section id="bookView" class="view" hidden>
+    <div class="book-toolbar">
+      <button class="back-btn" id="backBtn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg> 返回书架
+      </button>
+      <div class="toolbar-actions">
+        <button class="btn ghost small" id="addToCollectionBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17Z"/></svg>
+          加入合集
+        </button>
+        <button class="btn ghost small" id="editBookBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 4.6a1.9 1.9 0 0 1 2.7 2.7L8.6 17.8l-3.6.9.9-3.6Z"/></svg>
+          编辑资料
+        </button>
+      </div>
+    </div>
+
+    <div class="book-hero">
+      <div id="bookCover" class="book-cover big"></div>
+      <div class="book-hero-info">
+        <h2 id="bookTitle"></h2>
+        <p id="bookMeta" class="muted"></p>
+        <p id="bookDesc" class="book-desc" hidden></p>
+        <div class="book-progress-line">
+          <div class="bar"><i id="bookBar"></i></div>
+          <span id="bookPct" class="muted"></span>
+        </div>
+        <div class="book-actions">
+          <button id="bookPlayBtn" class="btn primary large">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            <span id="bookPlayLabel">开始收听</span>
+          </button>
+          <button id="bookRestartBtn" class="btn ghost">从头开始</button>
+        </div>
+      </div>
+    </div>
+
+    <ol id="trackList" class="track-list"></ol>
+  </section>
+
+</main>
+
+<!-- ============ 迷你播放器 ============ -->
+<div id="miniPlayer" class="mini" hidden>
+  <div class="mini-progress"><i id="miniBar"></i></div>
+  <div class="mini-inner">
+    <button class="mini-info" id="expandBtn" title="展开播放器">
+      <span id="miniCover" class="book-cover tiny"></span>
+      <span class="mini-text">
+        <span id="miniTitle" class="mini-title"></span>
+        <span id="miniTrack" class="mini-track"></span>
+      </span>
+    </button>
+    <div class="mini-controls">
+      <button id="miniPrev" class="icon-btn" title="上一章">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6.5v11L9.5 12zM6 6.5h2.2v11H6z"/></svg>
+      </button>
+      <button id="miniPlay" class="play-btn" title="播放 / 暂停">
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5h3v13H8zM13 5.5h3v13h-3z"/></svg>
+      </button>
+      <button id="miniNext" class="icon-btn" title="下一章">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.5v11L14.5 12zM15.8 6.5H18v11h-2.2z"/></svg>
+      </button>
+    </div>
+    <div class="mini-side">
+      <button id="miniSpeed" class="chip" title="倍速">1.0×</button>
+      <button id="miniTimer" class="chip" title="定时关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4.2l2.6 1.6M9 3.5h6"/></svg>
+        <span>定时</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 全屏播放器 ============ -->
+<div id="playerSheet" class="sheet" hidden>
+  <div class="sheet-bg" id="sheetBg"></div>
+  <div class="sheet-inner">
+    <div class="sheet-top">
+      <button id="collapseBtn" class="icon-btn" title="收起">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
+      </button>
+      <span class="muted tiny" id="sheetKicker">正在收听</span>
+      <button id="sheetTimerBadge" class="chip ghost-chip" hidden></button>
+    </div>
+
+    <div id="sheetCover" class="book-cover xl"></div>
+
+    <div class="sheet-meta">
+      <h2 id="sheetTitle"></h2>
+      <p id="sheetTrack" class="muted"></p>
+    </div>
+
+    <div class="seek">
+      <input id="seekBar" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">
+      <div class="seek-times">
+        <span id="curTime">0:00</span>
+        <span id="durTime">--:--</span>
+      </div>
+    </div>
+
+    <div class="sheet-controls">
+      <button id="back30" class="icon-btn big skip" title="后退 30 秒">
+        <span class="sk-t">−30</span>
+      </button>
+      <button id="prevBtn" class="icon-btn big" title="上一章">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6.5v11L9.5 12zM6 6.5h2.2v11H6z"/></svg>
+      </button>
+      <button id="playBtn" class="play-btn huge" title="播放 / 暂停">
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5h3v13H8zM13 5.5h3v13h-3z"/></svg>
+      </button>
+      <button id="nextBtn" class="icon-btn big" title="下一章">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.5v11L14.5 12zM15.8 6.5H18v11h-2.2z"/></svg>
+      </button>
+      <button id="fwd30" class="icon-btn big skip" title="前进 30 秒">
+        <span class="sk-t">+30</span>
+      </button>
+    </div>
+
+    <div class="sheet-tools">
+      <button id="speedBtn" class="tool"><span class="tool-k">倍速</span><span id="speedVal" class="tool-v">1.0×</span></button>
+      <button id="timerBtn" class="tool"><span class="tool-k">定时关闭</span><span id="timerVal" class="tool-v">关闭</span></button>
+      <button id="chapterBtn" class="tool"><span class="tool-k">当前章节</span><span id="chapterVal" class="tool-v">—</span></button>
+    </div>
+
+    <div class="volume">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3L12 5.5v13L7 14.5H4zM16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.6 7.6 0 0 1 0 10.8"/></svg>
+      <input id="volumeBar" type="range" min="0" max="100" value="100" aria-label="音量">
+    </div>
+
+    <p id="sheetFoot" class="sheet-foot muted tiny">进度已自动保存 · 关闭网页也不会丢</p>
+  </div>
+</div>
+
+<!-- ============ 合集内容 ============ -->
+<div id="collectionSheet" class="modal" hidden>
+  <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="colName">
+    <header class="modal-head">
+      <div class="col-head-left">
+        <h3 id="colName">合集</h3>
+        <p id="colMeta" class="muted tiny"></p>
+      </div>
+      <div class="col-head-right">
+        <button id="colSortBtn" class="btn ghost small">调整顺序</button>
+        <button id="colManageBtn" class="btn ghost small">管理</button>
+        <button id="colCloseBtn" class="icon-btn" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="modal-body">
+      <div id="colGrid" class="col-grid"></div>
+      <p id="colEmpty" class="col-empty muted" hidden>这个合集里还没有书，点右上角「管理」挑几本进来</p>
+    </div>
+
+    <footer class="modal-foot" id="colSortFoot" hidden>
+      <p class="muted tiny col-tip">拖动卡片调整顺序，或用卡片下方的箭头</p>
+      <button id="colSortDone" class="btn primary">完成</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 新建 / 管理合集 ============ -->
+<div id="colEditSheet" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="colEditTitle">
+    <header class="modal-head">
+      <h3 id="colEditTitle">新建合集</h3>
+      <button id="colEditClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <label class="field">
+        <span class="field-label">合集名称</span>
+        <input id="colEditName" type="text" maxlength="24" placeholder="例如：科幻系列、睡前故事" autocomplete="off">
+      </label>
+
+      <div class="field">
+        <span class="field-label">包含的书 <em id="colPickCount" class="pick-count"></em></span>
+        <div id="colPickList" class="pick-list"></div>
+      </div>
+    </div>
+
+    <footer class="modal-foot">
+      <button id="colDelete" class="btn ghost danger" hidden>删除合集</button>
+      <span class="foot-spacer"></span>
+      <button id="colEditCancel" class="btn ghost">取消</button>
+      <button id="colEditSave" class="btn primary">保存</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 上传书籍 ============ -->
+<div id="uploadSheet" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="uploadHeading">
+    <header class="modal-head">
+      <h3 id="uploadHeading">上传书籍</h3>
+      <button id="uploadClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <p class="upload-target muted tiny">上传到 <b id="uploadDir">书架目录</b></p>
+
+      <div class="upload-pick">
+        <button id="pickFolderBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17Z"/></svg>
+          <b>选择文件夹</b>
+          <span class="tiny">整个书文件夹，一次可传多本</span>
+        </button>
+        <button id="pickArchiveBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5zM9.5 4.5v5M14.5 9.5v5"/></svg>
+          <b>选择压缩包</b>
+          <span class="tiny">zip / tar.gz / tgz</span>
+        </button>
+      </div>
+
+      <div id="uploadProgress" class="upload-progress" hidden>
+        <div class="bar"><i id="uploadBar"></i></div>
+        <p id="uploadStatus" class="muted tiny"></p>
+      </div>
+
+      <p class="muted tiny upload-tip">
+        文件夹名就是书名，支持 mp3 / m4a / m4b / aac / ogg / flac / wav；封面放 cover.jpg 会自动识别。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 进度备份 ============ -->
+<div id="backupSheet" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="backupHeading">
+    <header class="modal-head">
+      <h3 id="backupHeading">进度备份</h3>
+      <button id="backupClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <p id="backupInfo" class="backup-note muted tiny">—</p>
+
+      <div class="upload-pick">
+        <button id="exportBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5M8 11l4 4 4-4M5 18.5h14"/></svg>
+          <b>导出进度</b>
+          <span class="tiny">存成一个 JSON 文件</span>
+        </button>
+        <button id="importBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5V10M8 13.5l4-4 4 4M5 5.5h14"/></svg>
+          <b>导入进度</b>
+          <span class="tiny">从备份文件恢复</span>
+        </button>
+      </div>
+
+      <p class="muted tiny upload-tip">
+        进度平时存在路由器上，各端自动同步。这个文件用于整体搬家：换路由器、重装系统、或者留个存档。
+        导入时同一本书取较新的那份，不会把新的覆盖成旧的。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 编辑书籍 ============ -->
+<div id="editSheet" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editHeading">
+    <header class="modal-head">
+      <h3 id="editHeading">编辑书籍</h3>
+      <button id="editClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <div class="edit-cover-row">
+        <div id="editCover" class="book-cover edit-cover"></div>
+        <div class="edit-cover-side">
+          <button id="uploadCoverBtn" class="btn ghost small">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.5V4.8M7.6 9 12 4.6 16.4 9M4.8 15v3.4a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6V15"/></svg>
+            上传图片
+          </button>
+          <button id="shuffleCoverBtn" class="btn ghost small">换个配色</button>
+          <button id="resetCoverBtn" class="btn ghost small">恢复默认</button>
+          <p class="muted tiny">支持 jpg / png / webp，会自动裁成方形</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">配色</span>
+        <div id="paletteRow" class="palette-row"></div>
+      </div>
+
+      <label class="field">
+        <span class="field-label">书名</span>
+        <input id="editTitle" type="text" maxlength="60" placeholder="留空则使用文件夹名" autocomplete="off">
+      </label>
+
+      <label class="field">
+        <span class="field-label">简介</span>
+        <textarea id="editDesc" rows="4" maxlength="600" placeholder="作者、朗读者、内容简介…随便写，只有你自己看得到"></textarea>
+        <span id="descCount" class="field-hint">0 / 600</span>
+      </label>
+    </div>
+
+    <footer class="modal-foot">
+      <button id="bookDeleteBtn" class="btn ghost danger" hidden>删除这本书</button>
+      <span class="foot-spacer"></span>
+      <button id="editCancel" class="btn ghost">取消</button>
+      <button id="editSave" class="btn primary">保存</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 浮层：倍速 / 定时 ============ -->
+<div id="popover" class="popover" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<audio id="audio" preload="metadata"></audio>
+<input id="folderInput" type="file" webkitdirectory directory multiple hidden>
+<input id="coverInput" type="file" accept="image/*" hidden>
+<input id="uploadDirInput" type="file" webkitdirectory directory multiple hidden>
+<input id="uploadFileInput" type="file" accept=".zip,.tar,.gz,.tgz,application/zip,application/gzip" hidden>
+<input id="progressFileInput" type="file" accept=".json,application/json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>

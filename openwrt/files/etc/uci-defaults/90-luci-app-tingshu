@@ -1,0 +1,13 @@
+#!/bin/sh
+# 安装后：补齐默认值、开机自启、启动服务
+[ -f /etc/config/tingshu ] || exit 0
+
+uci -q get tingshu.main.port >/dev/null 2>&1 || uci set tingshu.main.port='8686'
+uci -q get tingshu.main.books_dir >/dev/null 2>&1 || uci set tingshu.main.books_dir='/mnt/audiobooks'
+uci -q get tingshu.main.enabled >/dev/null 2>&1 || uci set tingshu.main.enabled='1'
+uci -q commit tingshu
+
+/etc/init.d/tingshu enable
+/etc/init.d/tingshu restart >/dev/null 2>&1
+
+exit 0

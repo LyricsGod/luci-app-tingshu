@@ -1,0 +1,18 @@
+{
+	"luci-app-tingshu": {
+		"description": "听书服务管理",
+		"read": {
+			"uci": [ "tingshu" ],
+			"file": {
+				"/usr/lib/tingshu/scan.sh": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "tingshu" ],
+			"file": {
+				"/usr/lib/tingshu/scan.sh": [ "exec" ],
+				"/etc/init.d/tingshu": [ "exec" ]
+			}
+		}
+	}
+}

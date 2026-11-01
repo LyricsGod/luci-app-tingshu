@@ -1,0 +1,170 @@
+#!/bin/sh
+#
+# 听书 · 书库管理接口（uhttpd CGI）
+#
+#   POST ?action=upload&p=<urlenc 相对路径>   请求体 = 文件内容，写入 书架/相对路径
+#   POST ?action=archive&n=<urlenc 文件名>    请求体 = 压缩包，解压进书架目录
+#   POST ?action=delete&b=<urlenc 相对目录>   删除 书架/相对目录
+#   POST ?action=rescan                       重新扫描并生成 library.json
+#
+# 只允许音频/图片/文本类文件；路径一律拒绝 .. 和绝对路径。
+
+BOOKS_DIR="${TINGSHU_BOOKS_DIR:-}"
+WWW_DIR="${TINGSHU_WWW_DIR:-/tmp/tingshu/www}"
+
+if [ -z "$BOOKS_DIR" ]; then
+	if [ -f /lib/functions.sh ] && [ -f /etc/config/tingshu ]; then
+		. /lib/functions.sh
+		config_load tingshu
+		config_get BOOKS_DIR main books_dir /mnt/audiobooks
+	else
+		BOOKS_DIR=/mnt/audiobooks
+	fi
+fi
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf '\r\n'
+}
+
+ok() {
+	hdr
+	printf '{"ok":true%s}\n' "$1"
+	exit 0
+}
+
+fail() {
+	hdr
+	printf '{"ok":false,"error":"%s"}\n' "$1"
+	exit 0
+}
+
+# %E4%B8%89 -> 三（printf 的 \xHH）
+urldecode() {
+	printf '%b' "$(printf '%s' "$1" | sed 's/%/\\x/g')"
+}
+
+param() {
+	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+# 相对路径合法性：非空、非绝对、任何一段都不能是 ..
+safe_rel() {
+	[ -n "$1" ] || return 1
+	case "$1" in /*) return 1 ;; esac
+	case "/$1/" in */../*) return 1 ;; esac
+	return 0
+}
+
+qs="${QUERY_STRING:-}"
+action="$(param "$qs" action)"
+[ -n "$action" ] || fail "no action"
+
+[ -d "$BOOKS_DIR" ] || fail "books dir missing"
+
+case "$action" in
+
+upload)
+	rel="$(urldecode "$(param "$qs" p)")"
+	safe_rel "$rel" || fail "bad path"
+
+	# 只允许音视频/图片/文本，避免往书库里丢可执行文件
+	ext=$(printf '%s' "$rel" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
+	case "$ext" in
+		mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|webm|ape|wma|\
+		jpg|jpeg|png|webp|gif|bmp|\
+		txt|nfo|m3u|m3u8|json|srt|lrc) ;;
+		*) fail "unsupported type: $ext" ;;
+	esac
+
+	target="$BOOKS_DIR/$rel"
+	dir=$(dirname "$target")
+	mkdir -p "$dir" 2>/dev/null || fail "mkdir failed"
+
+	cat > "$target" 2>/dev/null || fail "write failed"
+
+	want="${CONTENT_LENGTH:-0}"
+	have=$(wc -c < "$target" 2>/dev/null | tr -d ' ')
+	if [ "$want" != "0" ] && [ "$want" != "$have" ]; then
+		rm -f "$target"
+		fail "incomplete upload"
+	fi
+
+	ok ",\"size\":$have"
+	;;
+
+archive)
+	name="$(urldecode "$(param "$qs" n)")"
+	ext=$(printf '%s' "$name" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
+	case "$ext" in
+		zip|tar|gz|tgz) ;;
+		*) fail "unsupported archive: $ext" ;;
+	esac
+
+	tmp="/tmp/tingshu-up.$$"
+	cat > "$tmp" 2>/dev/null || { rm -f "$tmp"; fail "upload failed"; }
+
+	want="${CONTENT_LENGTH:-0}"
+	have=$(wc -c < "$tmp" 2>/dev/null | tr -d ' ')
+	if [ "$want" != "0" ] && [ "$want" != "$have" ]; then
+		rm -f "$tmp"
+		fail "incomplete upload"
+	fi
+
+	# 先解到临时目录，再把顶层内容并进书库
+	stage="/tmp/tingshu-stage.$$"
+	mkdir -p "$stage" 2>/dev/null
+
+	if [ "$ext" = "zip" ]; then
+		unzip -q -o "$tmp" -d "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; fail "unzip failed"; }
+	else
+		tar -xf "$tmp" -C "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; fail "untar failed"; }
+	fi
+	rm -f "$tmp"
+
+	moved=0
+	for f in "$stage"/* "$stage"/.[!.]*; do
+		[ -e "$f" ] || continue
+		base=$(basename "$f")
+		case "$base" in
+			__MACOSX|.DS_Store|desktop.ini) continue ;;
+		esac
+		rm -rf "$BOOKS_DIR/$base" 2>/dev/null
+		mv "$f" "$BOOKS_DIR/" 2>/dev/null && moved=$((moved + 1))
+	done
+	rm -rf "$stage"
+
+	[ "$moved" -gt 0 ] || fail "nothing extracted"
+	ok ",\"items\":$moved"
+	;;
+
+delete)
+	rel="$(urldecode "$(param "$qs" b)")"
+	safe_rel "$rel" || fail "bad path"
+
+	target="$BOOKS_DIR/$rel"
+	[ -e "$target" ] || fail "not found"
+
+	real=$(readlink -f "$target" 2>/dev/null)
+	root=$(readlink -f "$BOOKS_DIR" 2>/dev/null)
+	case "$real" in
+		"$root"/*) ;;
+		*) fail "outside books dir" ;;
+	esac
+
+	rm -rf "$target" 2>/dev/null || fail "delete failed"
+	ok ""
+	;;
+
+rescan)
+	out=$(TINGSHU_WWW_DIR="$WWW_DIR" /usr/lib/tingshu/scan.sh 2>/dev/null | tail -n 1)
+	books=$(printf '%s' "$out" | sed -n 's/.*"books":\([0-9]*\).*/\1/p')
+	tracks=$(printf '%s' "$out" | sed -n 's/.*"tracks":\([0-9]*\).*/\1/p')
+	ok ",\"books\":${books:-0},\"tracks\":${tracks:-0}"
+	;;
+
+*)
+	fail "unknown action"
+	;;
+esac

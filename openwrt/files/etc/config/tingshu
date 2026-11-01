@@ -1,0 +1,4 @@
+config tingshu 'main'
+	option enabled '1'
+	option port '8686'
+	option books_dir '/mnt/audiobooks'
