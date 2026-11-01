@@ -2541,13 +2541,74 @@
   function updateMediaSession(book, track) {
     if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
     try {
+      let cover = coverUrlOf(book);
+      // MediaMetadata 的 artwork 需要绝对 URL（安卓通知栏直接访问）
+      if (cover && !/^(https?:|blob:|data:)/.test(cover)) {
+        cover = new URL(cover, location.href).href;
+      }
+      const art = cover
+        ? [{ src: cover, sizes: '512x512', type: 'image/*' }]
+        : (bookIconDataUrl ? [{ src: bookIconDataUrl, sizes: '512x512', type: 'image/png' }] : []);
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: book.title,
         album: `第 ${state.current.index + 1} 章`,
-        artwork: coverUrlOf(book) ? [{ src: coverUrlOf(book), sizes: '512x512' }] : [],
+        artwork: art,
       });
     } catch { /* 忽略 */ }
+  }
+
+  // 用 Canvas 画一个书籍图标，兜底给 MediaSession 用（安卓通知栏没有封面时显示默认音乐符号）
+  let bookIconDataUrl = null;
+  function ensureBookIcon() {
+    if (bookIconDataUrl) return;
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 512;
+      const ctx = c.getContext('2d');
+      // 圆角底
+      const r = 100;
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.arcTo(512, 0, 512, 512, r);
+      ctx.arcTo(512, 512, 0, 512, r);
+      ctx.arcTo(0, 512, 0, 0, r);
+      ctx.arcTo(0, 0, 512, 0, r);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, 0, 512, 512);
+      g.addColorStop(0, '#d18a5a');
+      g.addColorStop(1, '#9c4f2c');
+      ctx.fillStyle = g;
+      ctx.fill();
+      // 摊开的书
+      ctx.fillStyle = 'rgba(253,246,238,0.94)';
+      ctx.beginPath();
+      ctx.moveTo(150, 140);
+      ctx.lineTo(290, 140);
+      ctx.quadraticCurveTo(290, 200, 270, 200);
+      ctx.lineTo(270, 330);
+      ctx.lineTo(150, 330);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,248,240,0.8)';
+      ctx.beginPath();
+      ctx.moveTo(362, 140);
+      ctx.lineTo(300, 140);
+      ctx.quadraticCurveTo(300, 200, 320, 200);
+      ctx.lineTo(320, 330);
+      ctx.lineTo(362, 330);
+      ctx.closePath();
+      ctx.fill();
+      // 播放三角
+      ctx.fillStyle = '#9c4f2c';
+      ctx.beginPath();
+      ctx.moveTo(236, 210);
+      ctx.lineTo(296, 248);
+      ctx.lineTo(236, 286);
+      ctx.closePath();
+      ctx.fill();
+      bookIconDataUrl = c.toDataURL('image/png');
+    } catch { /* 画不出来就算了，用默认 */ }
   }
 
   function setupMediaSession() {
@@ -3373,6 +3434,7 @@
     applyTheme();
     bind();
     setupMediaSession();
+    ensureBookIcon();
 
     setRate(state.settings.rate);
     setVolume(state.settings.volume, true);
