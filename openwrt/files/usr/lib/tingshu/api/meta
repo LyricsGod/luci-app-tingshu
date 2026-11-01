@@ -39,6 +39,10 @@ if [ "$method" = "POST" ]; then
 	case "$id" in ''|*[!0-9a-f]*) hdr; printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
 	[ ${#id} -le 400 ] || { hdr; printf '{"ok":false,"error":"id too long"}\n'; exit 0; }
 
+	# 诊断日志：记录 body 大小和 cover 字段长度
+	_clen=$(printf '%s' "$body" | sed -n 's/.*"cover":"\([^"]*\)".*/\1/p' | wc -c)
+	logger -t tingshu "meta POST id=${#id} body=${len} cover=${_clen}"
+
 	tmp="$DATA_DIR/.$id.$$"
 	printf '%s' "$body" > "$tmp" 2>/dev/null
 	if [ $? -ne 0 ]; then

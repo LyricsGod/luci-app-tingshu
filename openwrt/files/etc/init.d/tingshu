@@ -20,7 +20,10 @@ prepare_www() {
 	done
 	# 每次启动给静态资源加版本号，避免浏览器缓存旧版（uhttpd 无 no-cache 选项）
 	_ver=$(date +%s)
-	sed -i "s#app.js#app.js?v=$_ver#g; s#styles.css#styles.css?v=$_ver#g" "$WWW_DIR/index.html" 2>/dev/null
+	# 注入版本号到静态资源引用 + 全局变量（点击首页品牌可看）
+	_date=$(date '+%Y-%m-%d %H:%M:%S')
+	sed -i "s#app.js#app.js?v=$_ver#g; s#styles.css#styles.css?v=$_ver#g; \
+	        s#@BOOT@#$_ver#g; s#@BUILD@#$_date#g" "$WWW_DIR/index.html" 2>/dev/null
 	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步
 	mkdir -p "$WWW_DIR/cgi-ts"
 	for api in progress manage collections meta; do

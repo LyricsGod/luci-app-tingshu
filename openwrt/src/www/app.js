@@ -120,6 +120,7 @@
     backupSheet: $('#backupSheet'),
     backupClose: $('#backupClose'),
     backupBtn: $('#backupBtn'),
+    brand: $('.brand'),
     backupInfo: $('#backupInfo'),
     exportBtn: $('#exportBtn'),
     importBtn: $('#importBtn'),
@@ -286,6 +287,18 @@
     el.toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.toast.hidden = true; }, ms);
+  }
+
+  /* 点击首页品牌，弹出启动时间与版本号 */
+  function showVersionInfo() {
+    const boot = window.__BOOT_STAMP__;
+    const build = window.__BUILD_VER__;
+    const appVersion = '1.0.0';
+    let info = '听书 v' + appVersion;
+    if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
+    if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
+    info += ' · 来源 ' + (state.source === 'net' ? '路由器' : '本机');
+    toast(info, 4200);
   }
 
   function esc(s) {
@@ -1057,10 +1070,14 @@
       b.userCover = editState.coverBlob;
       b.userCoverUrl = editState.tempUrl;
       editState.tempUrl = null;
+      console.log('[cover] 保存：有新封面', editState.coverBlob && editState.coverBlob.size);
     } else if (!editState.coverBlob) {
       if (b.userCoverUrl) URL.revokeObjectURL(b.userCoverUrl);
       b.userCover = null;
       b.userCoverUrl = null;
+      console.log('[cover] 保存：无封面（coverBlob 为空）');
+    } else {
+      console.log('[cover] 保存：保持旧封面', editState.coverBlob.size);
     }
 
     try {
@@ -2493,9 +2510,14 @@
       const m = metaOf(book);
       let coverB64 = '';
       let coverType = '';
-      if (m.coverBlob instanceof Blob) {
-        coverType = m.coverBlob.type || 'image/png';
-        coverB64 = await blobToBase64(m.coverBlob);
+      // 优先用 Blob；Blob 引用丢了但有 objectURL，就从 objectURL 反查
+      let coverBlob = m.coverBlob;
+      if (!(coverBlob instanceof Blob) && book.userCoverUrl && book.userCoverUrl.startsWith('blob:')) {
+        try { coverBlob = await (await fetch(book.userCoverUrl)).blob(); } catch { coverBlob = null; }
+      }
+      if (coverBlob instanceof Blob) {
+        coverType = coverBlob.type || 'image/png';
+        coverB64 = await blobToBase64(coverBlob);
       }
       const payload = {
         id: hexOf(book.id),
@@ -2506,15 +2528,25 @@
         coverType,
         updatedAt: now,
       };
+      console.log('[meta] push payload cover length=', coverB64.length, 'coverType=', coverType);
 
-      await fetch(META_API, {
+      const res = await fetch(META_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         keepalive: true,
       });
+      const rdata = await res.json().catch(() => null);
+      if (!res.ok || !rdata || rdata.ok !== true) {
+        console.warn('[meta] 推送失败', res.status, rdata);
+        toast('封面同步失败，请重试', 2600);
+      } else if (coverB64) {
+        toast('封面已同步', 1800);
+      }
 
-    } catch { /* 忽略同步失败 */ }
+    } catch (err) {
+      console.warn('[meta] 同步异常', err && err.message);
+    }
   }
 
   function blobToBase64(blob) {
@@ -3153,6 +3185,9 @@
     el.backupSheet.addEventListener('click', (e) => {
       if (e.target === el.backupSheet) closeBackupSheet();
     });
+
+    /* ---- 点击首页品牌显示版本 ---- */
+    el.brand.addEventListener('click', showVersionInfo);
     el.exportBtn.addEventListener('click', exportProgress);
     el.importBtn.addEventListener('click', () => el.progressFileInput.click());
     el.progressFileInput.addEventListener('change', async (e) => {
@@ -3190,6 +3225,8 @@
       if (!f) return;
       if (!/^image\//.test(f.type)) { toast('请选择图片文件'); return; }
       const blob = await toSquareCover(f);
+      console.log('[cover] 选择封面', f.name, f.type, f.size, '->', blob && blob.type, blob && blob.size);
+      if (!blob) { toast('封面处理失败，请换一张图试试'); return; }
       if (editState.tempUrl) URL.revokeObjectURL(editState.tempUrl);
       editState.coverBlob = blob;
       editState.tempUrl = URL.createObjectURL(blob);
