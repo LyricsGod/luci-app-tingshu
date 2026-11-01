@@ -161,8 +161,8 @@
     bookView: null,
     progress: new Map(),
     durations: new Map(),
-    settings: { rate: 1, volume: 1, theme: 'auto', sort: 'recent' },
-    sleep: { mode: 'off', endsAt: 0, minutes: 0 },
+    settings: { rate: 1, volume: 1, theme: 'auto', sort: 'recent', sleepFinish: false },
+    sleep: { mode: 'off', endsAt: 0, minutes: 0, pending: false },
     filter: '',
     source: 'local',      // local = 本机文件夹，net = 路由器/服务器书库
     serverRoot: '',
@@ -2458,10 +2458,13 @@
       return `<button type="button" class="pop-row ${on ? 'on' : ''}" data-min="${m}">
         <span>${m} 分钟</span><span class="pr-right">${on ? '进行中' : ''}</span></button>`;
     }).join('');
+    const finish = !!state.settings.sleepFinish;
+    const finishRow = `<button type="button" class="pop-row ${finish ? 'on' : ''}" data-toggle="finish">
+        <span>到点后听完本节</span><span class="pr-right">${finish ? '开' : '关'}</span></button>`;
     const offRow = `<button type="button" class="pop-row" data-mode="off">
         <span>关闭定时</span><span class="pr-right">${active === 'off' ? '未启用' : ''}</span></button>`;
 
-    showPopover(anchor, `<h4>定时关闭</h4>${chapterRow}${rows}${offRow}`, 190);
+    showPopover(anchor, `<h4>定时关闭</h4>${chapterRow}${rows}${finishRow}${offRow}`, 200);
 
     $$('[data-min]', el.popover).forEach(b => b.addEventListener('click', () => {
       setSleep('time', parseFloat(b.dataset.min));
@@ -2471,6 +2474,19 @@
       setSleep(b.dataset.mode);
       hidePopover();
     }));
+
+    $$('[data-toggle]', el.popover).forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.settings.sleepFinish = !state.settings.sleepFinish;
+      saveSettings();
+      if (state.sleep.mode === 'time') state.sleep.finishTrack = state.settings.sleepFinish;
+
+      b.classList.toggle('on', state.settings.sleepFinish);
+      const right = b.querySelector('.pr-right');
+      if (right) right.textContent = state.settings.sleepFinish ? '开' : '关';
+
+      toast(state.settings.sleepFinish ? '定时到点后，本节播完再停' : '定时到点立即暂停', 2200);
+    }));
   }
 
   function setSleep(mode, minutes = 0) {
@@ -2479,14 +2495,17 @@
     fadeTimer = null;
 
     if (mode === 'time') {
-      state.sleep = { mode: 'time', endsAt: Date.now() + minutes * 60000, minutes };
+      const finishTrack = !!state.settings.sleepFinish;
+      state.sleep = { mode: 'time', endsAt: Date.now() + minutes * 60000, minutes, finishTrack, pending: false };
       sleepTimer = setInterval(tickSleep, 500);
-      toast(`将在 ${minutes} 分钟后暂停`);
+      toast(finishTrack
+        ? `${minutes} 分钟到点后，本节播完再暂停`
+        : `将在 ${minutes} 分钟后暂停`);
     } else if (mode === 'chapter') {
-      state.sleep = { mode: 'chapter', endsAt: 0, minutes: 0 };
+      state.sleep = { mode: 'chapter', endsAt: 0, minutes: 0, pending: false };
       toast('本章播完后自动暂停');
     } else {
-      state.sleep = { mode: 'off', endsAt: 0, minutes: 0 };
+      state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
       toast('定时已关闭');
     }
     updateTimerUI();
@@ -2498,11 +2517,31 @@
 
   function tickSleep() {
     if (state.sleep.mode !== 'time') return;
-    if (sleepRemaining() <= 0) {
-      if (!fadeTimer) startFadeOut();
+    if (state.sleep.pending) return;            // 已经在等本节播完
+    if (sleepRemaining() > 0) { updateTimerUI(); return; }
+
+    // 到点了：勾了「听完本节」就不打断，等音频自己走完
+    if (state.sleep.finishTrack) { armPendingPause(); return; }
+
+    if (!fadeTimer) startFadeOut();
+  }
+
+  /* 定时到点，但先把当前音频播完再停 */
+  function armPendingPause() {
+    clearInterval(sleepTimer);
+    clearInterval(fadeTimer);
+    fadeTimer = null;
+
+    if (el.audio.paused) {
+      state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+      updateTimerUI();
+      toast('定时到点，当时没有在播放，已关闭');
       return;
     }
+
+    state.sleep.pending = true;
     updateTimerUI();
+    toast('定时已到，本节播完就暂停', 3200);
   }
 
   function startFadeOut() {
@@ -2519,7 +2558,7 @@
         fadeTimer = null;
         el.audio.pause();
         el.audio.volume = base;
-        state.sleep = { mode: 'off', endsAt: 0, minutes: 0 };
+        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
         updateTimerUI();
         toast('已按定时暂停');
       }
@@ -2531,7 +2570,11 @@
     let label = '关闭';
     let badge = '';
 
-    if (mode === 'time') {
+    if (mode === 'time' && state.sleep.pending) {
+      label = '本节后停';
+      badge = '⏱ 本节播完后暂停';
+      el.miniTimerLabel.textContent = '本节';
+    } else if (mode === 'time') {
       const left = sleepRemaining();
       const m = Math.floor(left / 60000);
       const s = Math.floor((left % 60000) / 1000);
@@ -2985,12 +3028,35 @@
     el.audio.addEventListener('pause', () => {
       updatePlayState();
       saveProgress(false, true);
+
+      // 正在等本节播完，但用户自己按了暂停 —— 目的已达到，收掉定时。
+      // 注意：音频自然播完时浏览器会「先 pause 再 ended」，这里必须放过结尾那一刻，
+      // 否则 ended 里就看不到 pending 了（会误切下一章）。
+      const atEnd = el.audio.duration > 0 && el.audio.currentTime >= el.audio.duration - 0.3;
+      if (state.sleep.mode === 'time' && state.sleep.pending && !el.audio.ended && !atEnd) {
+        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+        updateTimerUI();
+      }
     });
 
     el.audio.addEventListener('ended', () => {
       const c = state.current;
       if (!c) return;
       markDone(c.book, c.index);
+
+      // 定时到点后一直在等这一刻：本节播完，不续下一节
+      if (state.sleep.mode === 'time' && state.sleep.pending) {
+        clearInterval(sleepTimer);
+        clearInterval(fadeTimer);
+        fadeTimer = null;
+        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+        el.audio.pause();
+        saveProgress(true, true);
+        updateTimerUI();
+        toast('本节播完，已按定时暂停', 3200);
+        refreshBookView();
+        return;
+      }
 
       if (state.sleep.mode === 'chapter') {
         setSleep('off');
