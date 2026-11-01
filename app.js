@@ -953,7 +953,7 @@
 
   /* ================= 编辑书籍（封面 / 简介） ================= */
 
-  const editState = { book: null, palette: null, coverBlob: null, tempUrl: null };
+  const editState = { book: null, palette: null, coverBlob: null, tempUrl: null, title: '', desc: '' };
 
   function openEditor(book) {
     editState.book = book;
@@ -964,6 +964,8 @@
     el.editTitle.value = book.title && book.title !== book.folderTitle ? book.title : '';
     el.editTitle.placeholder = `留空则用文件夹名「${book.folderTitle}」`;
     el.editDesc.value = book.desc || '';
+    editState.title = el.editTitle.value;
+    editState.desc = el.editDesc.value;
     updateDescCount();
     renderPaletteRow();
     renderEditCover();
@@ -1049,8 +1051,12 @@
     const b = editState.book;
     if (!b) return;
 
+    // 保存时直接从 DOM 读最新值（手机输入法即使 input 事件延迟，value 也已同步更新）
     const typedTitle = el.editTitle.value.trim();
     const desc = el.editDesc.value.trim();
+    editState.title = el.editTitle.value;
+    editState.desc = el.editDesc.value;
+    console.log('[save] 读取到 title=', typedTitle, 'desc=', desc, 'coverBlob=', !!editState.coverBlob, 'tempUrl=', !!editState.tempUrl);
     const rec = {
       bookId: b.id,
       title: typedTitle && typedTitle !== b.folderTitle ? typedTitle : '',
@@ -1091,12 +1097,12 @@
     }
 
     // 同步到服务器（书名/简介/配色/封面，多端共享）
-    pushServerMeta(b);
+    const pushed = await pushServerMeta(b);
     closeEditor();
     if (state.bookView && state.bookView.id === b.id) renderBookView(b);
     renderLibrary();
     if (state.current && state.current.book.id === b.id) syncNowPlaying();
-    toast('已保存', 1400);
+    toast('已保存：简介「' + (desc || '(空)') + '」' + (pushed ? ' ✓已同步' : ' ✗未同步'), 2600);
   }
 
   /* ================= 合集 ================= */
@@ -2501,24 +2507,27 @@
 
   /* 把一本书的元数据推到服务器 */
   async function pushServerMeta(book) {
-    if (!book) return;
+    if (!book) return false;
     const now = Date.now();
-    if (now - (metaPushedAt.get(book.id) || 0) < 1000) return;
+    if (now - (metaPushedAt.get(book.id) || 0) < 1000) return true;
     metaPushedAt.set(book.id, now);
 
     try {
       const m = metaOf(book);
       let coverB64 = '';
       let coverType = '';
-      // 优先用 Blob；Blob 引用丢了但有 objectURL，就从 objectURL 反查
-      let coverBlob = m.coverBlob;
-      if (!(coverBlob instanceof Blob) && book.userCoverUrl && book.userCoverUrl.startsWith('blob:')) {
-        try { coverBlob = await (await fetch(book.userCoverUrl)).blob(); } catch { coverBlob = null; }
-      }
-      if (coverBlob instanceof Blob) {
-        coverType = coverBlob.type || 'image/png';
-        coverB64 = await blobToBase64(coverBlob);
-      }
+      // 封面编码失败不应阻塞简介/书名推送：单独 try，失败就跳过封面
+      try {
+        let coverBlob = m.coverBlob;
+        if (!(coverBlob instanceof Blob) && book.userCoverUrl && book.userCoverUrl.startsWith('blob:')) {
+          try { coverBlob = await (await fetch(book.userCoverUrl)).blob(); } catch { coverBlob = null; }
+        }
+        if (coverBlob instanceof Blob) {
+          coverType = coverBlob.type || 'image/png';
+          coverB64 = await blobToBase64(coverBlob);
+        }
+      } catch { coverB64 = ''; coverType = ''; }
+
       const payload = {
         id: hexOf(book.id),
         title: m.title,
@@ -2528,24 +2537,23 @@
         coverType,
         updatedAt: now,
       };
-      console.log('[meta] push payload cover length=', coverB64.length, 'coverType=', coverType);
+      console.log('[meta] push desc=', m.desc, 'cover长度=', coverB64.length);
 
       const res = await fetch(META_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        keepalive: true,
       });
       const rdata = await res.json().catch(() => null);
       if (!res.ok || !rdata || rdata.ok !== true) {
         console.warn('[meta] 推送失败', res.status, rdata);
-        toast('封面同步失败，请重试', 2600);
-      } else if (coverB64) {
-        toast('封面已同步', 1800);
+        return false;
       }
+      return true;
 
     } catch (err) {
       console.warn('[meta] 同步异常', err && err.message);
+      return false;
     }
   }
 
@@ -3148,7 +3156,15 @@
     el.editSheet.addEventListener('click', (e) => {
       if (e.target === el.editSheet) closeEditor();
     });
-    el.editDesc.addEventListener('input', updateDescCount);
+    // 实时同步输入到 editState，避免手机输入法未提交导致保存时读到旧值
+    el.editDesc.addEventListener('input', () => {
+      editState.desc = el.editDesc.value;
+      updateDescCount();
+    });
+    el.editTitle.addEventListener('input', () => {
+      editState.title = el.editTitle.value;
+      renderEditCover();
+    });
     el.editTitle.addEventListener('change', renderEditCover);
 
     el.paletteRow.addEventListener('click', (e) => {
