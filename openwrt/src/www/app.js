@@ -1490,7 +1490,9 @@
     const token = ++loadToken;
     const track = book.tracks[index];
 
-    // 本地文件夹用 File 句柄，服务器书库直接给 URL
+    // 本地文件夹用 File 句柄；服务器书库的音频会被 fetch 成 Blob。
+    // 为什么 fetch 成 Blob：uhttpd 不支持 HTTP Range，直接给 URL 的话
+    // 拖动进度条会跳回开头。blob URL 在本机内存里 seek，天然正常。
     let file = null;
     if (track.handle) {
       try {
@@ -1501,7 +1503,19 @@
         return;
       }
       if (token !== loadToken) return;
-    } else if (!track.src) {
+    } else if (track.src) {
+      // 网络书库：先整章拉下来转成 Blob
+      try {
+        const res = await fetch(track.src);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        file = await res.blob();
+      } catch (err) {
+        console.error(err);
+        toast('这一章加载失败');
+        return;
+      }
+      if (token !== loadToken) return;
+    } else {
       toast('这一章没有可用的音频地址');
       return;
     }
@@ -1519,7 +1533,7 @@
     if (file) objectUrl = URL.createObjectURL(file);
 
     const a = el.audio;
-    a.src = file ? objectUrl : track.src;
+    a.src = objectUrl;
     a.load();
     a.playbackRate = state.settings.rate;
     a.volume = state.settings.volume;
