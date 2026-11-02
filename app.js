@@ -432,7 +432,7 @@
   function showVersionInfo() {
     const boot = window.__BOOT_STAMP__;
     const build = window.__BUILD_VER__;
-    const appVersion = '1.4.1';
+    const appVersion = '1.4.2';
     let info = '听书 v' + appVersion;
     if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
     if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
@@ -2763,7 +2763,16 @@
 
     colSyncEnabled = true;
     const remote = Array.isArray(data.data) ? data.data : [];
-    if (!remote.length) return 0;
+    if (!remote.length) {
+      // 服务端明确说没有合集：清掉本地缓存，避免 App 删除后网页还留着
+      if (state.collections.length) {
+        state.collections = [];
+        dbClear('collections').catch(() => {});
+        renderLibrary();
+        return 1;
+      }
+      return 0;
+    }
 
     const localMap = new Map(state.collections.map(c => [c.id, c]));
     let changed = 0;
@@ -3804,6 +3813,11 @@
       if (e.target === el.usersSheet) { el.usersSheet.hidden = true; syncBodyScroll(); }
     });
     el.newUserForm.addEventListener('submit', createUser);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && state.user) {
+        void pullServerCollections();
+      }
+    });
     el.layoutBtn.addEventListener('click', () => {
       const steps = [0, 2, 3, 4, 5];
       const i = steps.indexOf(state.columns);

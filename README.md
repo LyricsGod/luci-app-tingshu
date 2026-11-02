@@ -43,7 +43,7 @@
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-tingshu_1.4.1-1_all.ipk
+opkg install /tmp/luci-app-tingshu_1.4.2-1_all.ipk
 ```
 
 装完自动启用并启动服务。打开 **服务 → 听书** 配置。
