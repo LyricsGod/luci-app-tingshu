@@ -117,7 +117,7 @@ app/src/main/java/com/tingshu/app/
 - 只支持局域网 HTTP（`usesCleartextTraffic=true`）；外网访问请走 VPN 或反向代理。
 - Android 13+ 需要授予通知权限才会显示播放通知；部分国产 ROM 还要手动允许后台运行/自启动。
 - 播放列表里的封面只用 `artworkUri`，不把 base64 塞进每条 MediaItem，避免 Binder 事务超限。
-- 当前版本号 1.3.0，APK 用 debug 签名。
+- 当前版本号 1.3.1，APK 用 debug 签名。
 
 ## 测试
 

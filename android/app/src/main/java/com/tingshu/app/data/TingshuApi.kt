@@ -44,8 +44,8 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         val text = request("${base}cgi-ts/auth?action=status&t=${System.currentTimeMillis()}", timeoutMs = 6000)
         val o = JSONObject(text)
         AuthStatus(
-            configured = o.optBoolean("configured"),
-            authenticated = o.optBoolean("authenticated"),
+            configured = o.optBoolean("configured") || o.optInt("configured", 0) == 1,
+            authenticated = o.optBoolean("authenticated") || o.optInt("authenticated", 0) == 1,
             user = o.optString("user"),
             role = o.optString("role"),
         )

@@ -432,7 +432,7 @@
   function showVersionInfo() {
     const boot = window.__BOOT_STAMP__;
     const build = window.__BUILD_VER__;
-    const appVersion = '1.4.0';
+    const appVersion = '1.4.1';
     let info = '听书 v' + appVersion;
     if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
     if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;

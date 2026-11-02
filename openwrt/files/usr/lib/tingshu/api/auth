@@ -44,13 +44,13 @@ action="$(ts_param "${QUERY_STRING:-}" action)"
 
 case "$action" in
 status)
-	_configured=0
-	[ "$(ts_user_count)" -gt 0 ] && _configured=1
-	_authed=0
+	_configured=false
+	[ "$(ts_user_count)" -gt 0 ] && _configured=true
+	_authed=false
 	_user=""
 	_role=""
 	if ts_load_session; then
-		_authed=1
+		_authed=true
 		_user="$TS_USER"
 		_role="$TS_ROLE"
 	fi

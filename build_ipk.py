@@ -22,7 +22,7 @@ import hashlib
 import tarfile
 
 NAME = 'luci-app-tingshu'
-VERSION = '1.4.0'
+VERSION = '1.4.1'
 RELEASE = '1'
 ARCH = 'all'
 
