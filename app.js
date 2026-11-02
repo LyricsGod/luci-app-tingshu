@@ -125,6 +125,12 @@
     exportBtn: $('#exportBtn'),
     importBtn: $('#importBtn'),
     progressFileInput: $('#progressFileInput'),
+    pausemarksBtn: $('#pausemarksBtn'),
+    pausemarksSheet: $('#pausemarksSheet'),
+    pausemarksClose: $('#pausemarksClose'),
+    pausemarksList: $('#pausemarksList'),
+    pmCount: $('#pmCount'),
+    pmClearBtn: $('#pmClearBtn'),
     bookDeleteBtn: $('#bookDeleteBtn'),
     editSave: $('#editSave'),
     editCancel: $('#editCancel'),
@@ -177,6 +183,8 @@
   let objectUrl = null;
   let currentBlob = null;   // 保住当前章节的 blob 引用，防止安卓后台 GC 后 blob URL 失效
   let loadToken = 0;
+  let prefetchCache = null;   // 预取的下一章 { bookId, index, file }，后台切章时避免 fetch 挂起
+  let prefetchToken = 0;
   let lastSaveAt = 0;
   let sleepTimer = null;
   let fadeTimer = null;
@@ -191,7 +199,7 @@
   function openDB() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open('tingshu-db', 4);
+      const req = indexedDB.open('tingshu-db', 5);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
@@ -199,6 +207,7 @@
         if (!db.objectStoreNames.contains('durations')) db.createObjectStore('durations', { keyPath: 'key' });
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'bookId' });
         if (!db.objectStoreNames.contains('collections')) db.createObjectStore('collections', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('pausemarks')) db.createObjectStore('pausemarks', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -311,7 +320,7 @@
   function syncBodyScroll() {
     const locked = !el.editSheet.hidden || !el.collectionSheet.hidden
       || !el.colEditSheet.hidden || !el.sheet.hidden || !el.uploadSheet.hidden
-      || !el.backupSheet.hidden;
+      || !el.backupSheet.hidden || !el.pausemarksSheet.hidden;
     document.body.style.overflow = locked ? 'hidden' : '';
   }
 
@@ -1548,7 +1557,12 @@
     // 为什么 fetch 成 Blob：uhttpd 不支持 HTTP Range，直接给 URL 的话
     // 拖动进度条会跳回开头。blob URL 在本机内存里 seek，天然正常。
     let file = null;
-    if (track.handle) {
+
+    // 命中预取缓存（后台切章时 fetch 可能被挂起，优先用已预取的 blob）
+    if (prefetchCache && prefetchCache.bookId === book.id && prefetchCache.index === index && prefetchCache.file) {
+      file = prefetchCache.file;
+      prefetchCache = null;
+    } else if (track.handle) {
       try {
         file = await track.handle.getFile();
       } catch (err) {
@@ -1615,6 +1629,34 @@
       renderTrackList(book);
       updateBookMeta(book);
       updateBookStats(book);
+    }
+
+    // 预取下一章，保证手机后台/锁屏时 ended 能立刻切章（不被 fetch 挂起）
+    prefetchNextTrack(book, index);
+  }
+
+  // 后台预取下一章的音频 blob，缓存起来
+  function prefetchNextTrack(book, index) {
+    const nextIndex = index + 1;
+    const next = book.tracks[nextIndex];
+    if (!next) { prefetchCache = null; return; }
+    if (prefetchCache && prefetchCache.bookId === book.id && prefetchCache.index === nextIndex) return;
+
+    const token = ++prefetchToken;
+    const finish = (file) => {
+      if (token !== prefetchToken) return;
+      prefetchCache = { bookId: book.id, index: nextIndex, file };
+    };
+
+    if (next.handle) {
+      next.handle.getFile()
+        .then(finish)
+        .catch(() => { if (token === prefetchToken) prefetchCache = null; });
+    } else if (next.src) {
+      fetch(next.src)
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob(); })
+        .then(finish)
+        .catch(() => { if (token === prefetchToken) prefetchCache = null; });
     }
   }
 
@@ -2952,6 +2994,7 @@
         el.audio.volume = base;
         state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
         updateTimerUI();
+        recordPauseMark();
         toast('已按定时暂停');
       }
     }, 320);
@@ -2986,6 +3029,122 @@
     el.timerVal.textContent = label;
     el.timerBtn.classList.toggle('active', mode !== 'off');
     el.miniTimer.classList.toggle('active', mode !== 'off');
+  }
+
+  /* ================= 定时暂停记录 ================= */
+
+  // 定时到点暂停时，记录一条「暂停记录」，之后可列表选择继续播放
+  function recordPauseMark() {
+    const c = state.current;
+    if (!c) return;
+    const t = c.book.tracks[c.index];
+    const time = Math.max(0, el.audio.currentTime || 0);
+    if (time < 1) return;  // 刚开始就停了，不值得记
+
+    const mark = {
+      id: 'pm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      bookId: c.book.id,
+      bookTitle: c.book.title || c.book.folderTitle || '',
+      index: c.index,
+      trackTitle: t.title || t.name || `第 ${c.index + 1} 章`,
+      time,
+      createdAt: Date.now(),
+    };
+    dbPut('pausemarks', mark).catch(() => {});
+  }
+
+  async function loadPauseMarks() {
+    let marks = [];
+    try { marks = await dbAll('pausemarks'); } catch { marks = []; }
+    return (marks || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }
+
+  function fmtStamp(ts) {
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function openPauseMarks() {
+    el.pausemarksSheet.hidden = false;
+    syncBodyScroll();
+    await renderPauseMarks();
+  }
+
+  function closePauseMarks() {
+    el.pausemarksSheet.hidden = true;
+    syncBodyScroll();
+  }
+
+  async function renderPauseMarks() {
+    const marks = await loadPauseMarks();
+    el.pmCount.textContent = marks.length ? `${marks.length} 条记录` : '';
+    el.pmClearBtn.hidden = marks.length === 0;
+
+    if (!marks.length) {
+      el.pausemarksList.innerHTML = '<li class="pm-empty">还没有定时暂停记录。<br>开启定时播放，到点暂停后会自动记一笔。</li>';
+      return;
+    }
+
+    el.pausemarksList.innerHTML = '';
+    for (const m of marks) {
+      const li = document.createElement('li');
+      const item = document.createElement('button');
+      item.className = 'pm-item';
+      item.type = 'button';
+
+      const main = document.createElement('span');
+      main.className = 'pm-main';
+      const title = document.createElement('div');
+      title.className = 'pm-title';
+      title.textContent = m.bookTitle;
+      const sub = document.createElement('div');
+      sub.className = 'pm-sub';
+      sub.textContent = `${m.trackTitle} · ${fmtTime(m.time)} · ${fmtStamp(m.createdAt)}`;
+      main.append(title, sub);
+
+      const del = document.createElement('span');
+      del.className = 'pm-del';
+      del.title = '删除这条';
+      del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12M10 11v4M14 11v4"/></svg>';
+
+      item.append(main, del);
+      li.append(item);
+
+      item.addEventListener('click', async () => {
+        // 跳到对应位置继续播放
+        const book = state.books.find(b => b.id === m.bookId);
+        if (!book) { toast('这本书已不在书架'); return; }
+        closePauseMarks();
+        const idx = Math.min(m.index, book.tracks.length - 1);
+        await playFrom(book, idx, { autoplay: true, time: m.time });
+        openSheet();
+      });
+
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deletePauseMark(m.id);
+      });
+
+      el.pausemarksList.append(li);
+    }
+  }
+
+  async function deletePauseMark(id) {
+    try { await dbDelete('pausemarks', id); } catch {}
+    toast('已删除');
+    await renderPauseMarks();
+  }
+
+  async function clearPauseMarks() {
+    const marks = await loadPauseMarks();
+    if (!marks.length) return;
+    if (!confirm(`确定清空全部 ${marks.length} 条暂停记录？`)) return;
+    for (const m of marks) {
+      try { await dbDelete('pausemarks', m.id); } catch {}
+    }
+    toast('已清空');
+    await renderPauseMarks();
   }
 
   /* ================= 浮层 ================= */
@@ -3208,6 +3367,14 @@
     el.backupSheet.addEventListener('click', (e) => {
       if (e.target === el.backupSheet) closeBackupSheet();
     });
+
+    /* ---- 定时暂停记录 ---- */
+    el.pausemarksBtn.addEventListener('click', openPauseMarks);
+    el.pausemarksClose.addEventListener('click', closePauseMarks);
+    el.pausemarksSheet.addEventListener('click', (e) => {
+      if (e.target === el.pausemarksSheet) closePauseMarks();
+    });
+    el.pmClearBtn.addEventListener('click', clearPauseMarks);
 
     /* ---- 点击首页品牌显示版本 ---- */
     el.brand.addEventListener('click', showVersionInfo);
@@ -3459,6 +3626,7 @@
         el.audio.pause();
         saveProgress(true, true);
         updateTimerUI();
+        recordPauseMark();
         toast('本节播完，已按定时暂停', 3200);
         refreshBookView();
         return;
@@ -3468,6 +3636,7 @@
         setSleep('off');
         el.audio.pause();
         saveProgress(true, true);
+        recordPauseMark();
         toast('本章播完，已按定时暂停');
         refreshBookView();
         return;
