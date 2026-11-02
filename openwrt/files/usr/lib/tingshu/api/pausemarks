@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# 听书 · 暂停记录同步接口（uhttpd CGI）
+#
+#   GET  /cgi-ts/pausemarks   → {"ok":true,"items":[...]}
+#   POST /cgi-ts/pausemarks   → body 是整个 JSON 数组
+#
+# 数据放在 /etc/tingshu/pausemarks.json（overlay，重启不丢）
+# 记录数量有限，总是整体读写，用单个文件存整个列表。
+
+DATA_FILE="${TINGSHU_PAUSEMARKS_FILE:-/etc/tingshu/pausemarks.json}"
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+method="${REQUEST_METHOD:-GET}"
+
+if [ "$method" = "POST" ]; then
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) len=0 ;; esac
+	# 上限 1MB（每条记录含中文字段，几百条也就几十 KB）
+	[ "$len" -gt 1048576 ] && { hdr; printf '{"ok":false,"error":"too large"}\n'; exit 0; }
+
+	body=""
+	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+
+	# 必须是 JSON 数组（[ 开头 ] 结尾）
+	case "$body" in
+		'['*']') ;;
+		*) hdr; printf '{"ok":false,"error":"bad payload"}\n'; exit 0 ;;
+	esac
+
+	dir="$(dirname "$DATA_FILE")"
+	mkdir -p "$dir" 2>/dev/null
+	tmp="$DATA_FILE.$$"
+	printf '%s' "$body" > "$tmp" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr; printf '{"ok":false,"error":"write failed"}\n'; exit 0
+	fi
+	mv -f "$tmp" "$DATA_FILE" 2>/dev/null
+	if [ $? -ne 0 ]; then
+		rm -f "$tmp" 2>/dev/null
+		hdr; printf '{"ok":false,"error":"rename failed"}\n'; exit 0
+	fi
+
+	hdr; printf '{"ok":true}\n'; exit 0
+fi
+
+# ---- GET ----
+hdr
+if [ -f "$DATA_FILE" ]; then
+	printf '{"ok":true,"items":'
+	cat "$DATA_FILE"
+	printf '}\n'
+else
+	printf '{"ok":true,"items":[]}\n'
+fi
+exit 0

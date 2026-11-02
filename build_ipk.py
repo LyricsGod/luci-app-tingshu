@@ -38,6 +38,7 @@ EXEC_FILES = {
     'usr/lib/tingshu/api/manage',
     'usr/lib/tingshu/api/collections',
     'usr/lib/tingshu/api/meta',
+    'usr/lib/tingshu/api/pausemarks',
 }
 
 CONFFILES = ['/etc/config/tingshu']

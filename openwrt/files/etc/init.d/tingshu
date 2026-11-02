@@ -26,10 +26,10 @@ prepare_www() {
 	_date=$(date '+%Y-%m-%d %H:%M:%S')
 	sed -i "s#app.js#app.js?v=$_ver#g; s#styles.css#styles.css?v=$_ver#g; \
 	        s#@BOOT@#$_ver#g; s#@BUILD@#$_date#g" "$WWW_DIR/index.html" 2>/dev/null
-	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步
+	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步 + 暂停记录同步
 	mkdir -p "$WWW_DIR/cgi-ts"
 	chmod 755 "$WWW_DIR/cgi-ts"
-	for api in progress manage collections meta; do
+	for api in progress manage collections meta pausemarks; do
 		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 	done

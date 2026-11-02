@@ -2693,6 +2693,79 @@
     return changed;
   }
 
+  /* ================= 暂停记录云同步 ================= */
+
+  const PAUSEMARKS_API = 'cgi-ts/pausemarks';
+  let pmPushTimer = null;
+
+  // 把本地全部暂停记录推到服务器（整体上传，去重防抖）
+  function pushServerPauseMarks() {
+    if (state.source !== 'net') return;
+    clearTimeout(pmPushTimer);
+    pmPushTimer = setTimeout(async () => {
+      try {
+        let marks = [];
+        try { marks = await dbAll('pausemarks'); } catch { marks = []; }
+        const payload = (marks || []).map(m => ({
+          id: m.id,
+          bookId: m.bookId,
+          bookTitle: m.bookTitle || '',
+          index: m.index,
+          trackTitle: m.trackTitle || '',
+          time: m.time,
+          reason: m.reason || 'pause',
+          createdAt: m.createdAt || 0,
+        }));
+        await fetch(PAUSEMARKS_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch { /* 忽略 */ }
+    }, 500);
+  }
+
+  // 启动时从服务器拉取暂停记录，合并到本地（按 id 去重，取 createdAt 新的）
+  async function pullServerPauseMarks() {
+    let data;
+    try {
+      const res = await fetch(PAUSEMARKS_API + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return 0;
+      data = await res.json();
+    } catch { return 0; }
+    if (!data || data.ok !== true || !Array.isArray(data.items)) return 0;
+
+    // 本地记录
+    let local = [];
+    try { local = await dbAll('pausemarks'); } catch { local = []; }
+    const localMap = new Map((local || []).map(m => [m.id, m]));
+
+    let changed = 0;
+    for (const rec of data.items) {
+      if (!rec || typeof rec !== 'object' || !rec.id) continue;
+      const existing = localMap.get(rec.id);
+      const remoteTs = Number(rec.createdAt) || 0;
+      const localTs = existing ? (Number(existing.createdAt) || 0) : 0;
+      // 本地有且更新，保留本地；否则用服务器覆盖
+      if (existing && localTs >= remoteTs) continue;
+
+      const merged = {
+        id: rec.id,
+        bookId: rec.bookId,
+        bookTitle: rec.bookTitle || '',
+        index: Number(rec.index) || 0,
+        trackTitle: rec.trackTitle || '',
+        time: Number(rec.time) || 0,
+        reason: rec.reason || 'pause',
+        createdAt: remoteTs,
+      };
+      await dbPut('pausemarks', merged).catch(() => {});
+      changed++;
+    }
+
+    return changed;
+  }
+
   function ensureProgress(bookId) {
     let p = state.progress.get(bookId);
     if (!p) { p = { bookId, index: 0, time: 0, done: [], updatedAt: 0 }; state.progress.set(bookId, p); }
@@ -3062,6 +3135,7 @@
       createdAt: Date.now(),
     };
     dbPut('pausemarks', mark).catch(() => {});
+    pushServerPauseMarks();
   }
 
   async function loadPauseMarks(bookId) {
@@ -3150,6 +3224,7 @@
 
   async function deletePauseMark(id, bookId) {
     try { await dbDelete('pausemarks', id); } catch {}
+    pushServerPauseMarks();
     toast('已删除');
     await renderPauseMarks(bookId);
   }
@@ -3161,6 +3236,7 @@
     for (const m of marks) {
       try { await dbDelete('pausemarks', m.id); } catch {}
     }
+    pushServerPauseMarks();
     toast('已清空');
     await renderPauseMarks(bookId);
   }
@@ -3820,6 +3896,7 @@
     await pullServerProgress();
     await pullServerCollections();
     await pullServerMeta();
+    await pullServerPauseMarks();
 
     applyTheme();
     bind();
