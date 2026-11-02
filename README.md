@@ -12,12 +12,26 @@
 
 ## 功能
 
-- **书架**：按文件夹自动分书，封面可以是文件夹里的图，也可以自己传或选配色
+- **书架**：按文件夹自动分书，封面可以是文件夹里的图，也可以自己传、自由缩放裁切或选配色
 - **播放**：断点续播、±30 秒、0.5×–3× 倍速、定时关闭（15 分钟到 90 分钟，或「播完本章」）；后台/锁屏时自动预取下一章，播完无缝续下一集
 - **多端同步**：进度、合集、书名/简介/配色/封面、暂停记录，都存在路由器上，多台设备自动同步
 - **暂停记录**：每次暂停（手动暂停、定时到点、开启定时）都自动记一笔，可在书籍页里查看、跳转续播、删除或清空
 - **合集**：像手机桌面文件夹一样，把几本书收进一个盒子，顺序可拖动调整
 - **管理**：网页里直接上传书籍（文件夹或 zip / tar.gz）、删除书籍，不用进文件管理；点击首页「听书」图标可查看版本号
+
+## 安卓 App
+
+网页端之外还带一个原生安卓客户端（源码在 `android/`），连的是路由器上的同一个服务。**功能与网页版一致**：书架/合集（九宫格封面）、搜索排序、上传书籍、编辑书名简介封面、删除书籍、进度备份与恢复、暂停记录、倍速/定时/后台播放；封面统一 1:1 方形，传图时可自由缩放/拖动裁切，后台通知和锁屏也显示书籍封面。进度、合集、暂停记录都和网页端双向同步。
+
+![安卓客户端书架](android/docs/screenshots/library.png)
+
+去 [Releases](../../releases) 下载 `tingshu-android-1.2.1.apk` 安装（Android 8.0+）。第一次打开：
+
+1. 手机连上和路由器同一个 Wi-Fi
+2. 地址已预填 `192.168.2.1:8686`（换路由器直接改，或点「扫描局域网」自动发现）
+3. 连接后进入书架，点书 → 点章节开始听
+
+> 合集、书籍资料、上传/删除都在 App 里能直接操作；合集封面是 3×3 九宫格，「调整顺序」在合集页右上角。
 
 ## 安装
 
@@ -25,7 +39,7 @@
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-tingshu_1.0.0-1_all.ipk
+opkg install /tmp/luci-app-tingshu_1.3.0-1_all.ipk
 ```
 
 装完自动启用并启动服务。打开 **服务 → 听书** 配置。
@@ -79,6 +93,18 @@ cp -r openwrt package/luci-app-tingshu
 make package/luci-app-tingshu/compile V=s
 ```
 
+**安卓 App**
+
+需要 JDK 17 + Android SDK 34（用 Android Studio 打开 `android/` 也行）：
+
+```sh
+cd android
+./gradlew assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
+./gradlew testDebugUnitTest    # 进度同步协议、地址编码等单元测试
+```
+
+Release 用 debug 签名，装到手机上直接能用；要上架应用商店请换成自己的 keystore。
+
 推送到 `main` 或打 `v*` 标签会触发 GitHub Actions 自动打包；打标签时还会自动发 Release。
 
 ## 本地预览
@@ -109,6 +135,12 @@ openwrt/
     usr/lib/tingshu/api/pausemarks   暂停记录同步 CGI
   htdocs/.../view/tingshu/main.js    LuCI 页面
 build_ipk.py                         不依赖 SDK 的打包脚本
+android/                             原生安卓客户端（Kotlin + Jetpack Compose + Media3）
+  app/src/main/java/com/tingshu/app/
+    data/                            HTTP 客户端、书库、进度、封面缓存、局域网扫描
+    playback/                        Media3 后台播放服务
+    ui/                              Compose 界面与状态
+  app/src/test/                      单元测试（与服务端 CGI 的协议对齐）
 ```
 
 ## 已知限制
@@ -116,6 +148,7 @@ build_ipk.py                         不依赖 SDK 的打包脚本
 - 进度时间戳用的是各设备自己的时钟，多台设备都正常对时就没问题
 - zip 是在浏览器里解的（路由器上的 unzip 会把中文名转成 GBK），需要 Chrome 80+ / Edge / Safari 16.4+
 - 端口只开在局域网，WAN 侧被防火墙挡住；要外网访问建议走 VPN 或反向代理
+- 安卓 APK 用 debug 签名（自用够了）；部分国产 ROM 需要手动允许「后台运行 / 自启动」，否则后台听书可能被杀
 
 ## License
 

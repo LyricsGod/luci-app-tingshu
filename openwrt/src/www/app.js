@@ -105,6 +105,14 @@
     shuffleCoverBtn: $('#shuffleCoverBtn'),
     resetCoverBtn: $('#resetCoverBtn'),
     coverInput: $('#coverInput'),
+    cropSheet: $('#cropSheet'),
+    cropViewport: $('#cropViewport'),
+    cropCanvas: $('#cropCanvas'),
+    cropZoom: $('#cropZoom'),
+    cropSave: $('#cropSave'),
+    cropCancel: $('#cropCancel'),
+    cropClose: $('#cropClose'),
+    cropReset: $('#cropReset'),
     // 上传
     uploadSheet: $('#uploadSheet'),
     uploadClose: $('#uploadClose'),
@@ -305,7 +313,7 @@
   function showVersionInfo() {
     const boot = window.__BOOT_STAMP__;
     const build = window.__BUILD_VER__;
-    const appVersion = '1.2.0';
+    const appVersion = '1.3.0';
     let info = '听书 v' + appVersion;
     if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
     if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
@@ -323,7 +331,8 @@
   function syncBodyScroll() {
     const locked = !el.editSheet.hidden || !el.collectionSheet.hidden
       || !el.colEditSheet.hidden || !el.sheet.hidden || !el.uploadSheet.hidden
-      || !el.backupSheet.hidden || !el.pausemarksSheet.hidden;
+      || !el.backupSheet.hidden || !el.pausemarksSheet.hidden
+      || !el.cropSheet.hidden;
     document.body.style.overflow = locked ? 'hidden' : '';
   }
 
@@ -1036,23 +1045,140 @@
     editState.coverBlob = null;
   }
 
-  /* 把任意图片裁成正方形并压缩，避免数据库里塞大图 */
-  async function toSquareCover(file, size = 720) {
-    try {
-      const bmp = await createImageBitmap(file);
-      const side = Math.min(bmp.width, bmp.height);
-      const out = Math.min(size, side);
-      const canvas = document.createElement('canvas');
-      canvas.width = out;
-      canvas.height = out;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, out, out);
-      if (bmp.close) bmp.close();
-      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.86));
-      return blob || file;
-    } catch {
-      return file;
+  /* ---- 封面裁切：可拖动、可缩放，方框内画面输出 720×720 ---- */
+
+  const cropState = {
+    img: null, url: null, zoom: 1, ox: 0, oy: 0,
+    w: 0, h: 0, dpr: 1, pointers: new Map(), pinch: null,
+  };
+
+  function openCropper(file) {
+    closeCropper();
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    cropState.url = url;
+    img.onload = () => {
+      cropState.img = img;
+      cropState.zoom = 1;
+      cropState.ox = 0;
+      cropState.oy = 0;
+      el.cropSheet.hidden = false;
+      syncBodyScroll();
+      requestAnimationFrame(() => {
+        initCropCanvas();
+        resetCrop();
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      cropState.url = null;
+      toast('图片读取失败，请换一张试试', 2600);
+    };
+    img.src = url;
+  }
+
+  function initCropCanvas() {
+    const vp = el.cropViewport;
+    const c = el.cropCanvas;
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const w = Math.max(1, vp.clientWidth);
+    const h = Math.max(1, vp.clientHeight);
+    cropState.w = w;
+    cropState.h = h;
+    cropState.dpr = dpr;
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+    clampCrop();
+  }
+
+  function cropScale() {
+    const st = cropState;
+    if (!st.img) return 1;
+    return Math.max(st.w / st.img.naturalWidth, st.h / st.img.naturalHeight) * st.zoom;
+  }
+
+  function clampCrop() {
+    const st = cropState;
+    if (!st.img) return;
+    const s = cropScale();
+    const maxX = Math.max(0, (st.img.naturalWidth * s - st.w) / 2);
+    const maxY = Math.max(0, (st.img.naturalHeight * s - st.h) / 2);
+    st.ox = Math.max(-maxX, Math.min(maxX, st.ox));
+    st.oy = Math.max(-maxY, Math.min(maxY, st.oy));
+  }
+
+  function drawCrop() {
+    const st = cropState;
+    const c = el.cropCanvas;
+    if (!st.img || !st.w) return;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+    const s = cropScale();
+    ctx.save();
+    ctx.scale(st.dpr, st.dpr);
+    ctx.translate(st.w / 2 + st.ox, st.h / 2 + st.oy);
+    ctx.scale(s, s);
+    ctx.drawImage(st.img, -st.img.naturalWidth / 2, -st.img.naturalHeight / 2);
+    ctx.restore();
+  }
+
+  function setCropZoom(z) {
+    cropState.zoom = Math.max(1, Math.min(4, Number(z) || 1));
+    clampCrop();
+    el.cropZoom.value = String(cropState.zoom);
+    drawCrop();
+  }
+
+  function resetCrop() {
+    cropState.zoom = 1;
+    cropState.ox = 0;
+    cropState.oy = 0;
+    if (el.cropZoom) el.cropZoom.value = '1';
+    drawCrop();
+  }
+
+  function closeCropper() {
+    el.cropSheet.hidden = true;
+    syncBodyScroll();
+    cropState.img = null;
+    cropState.pointers.clear();
+    cropState.pinch = null;
+    if (cropState.url) {
+      URL.revokeObjectURL(cropState.url);
+      cropState.url = null;
     }
+  }
+
+  function applyCrop() {
+    const st = cropState;
+    if (!st.img || !st.w) return;
+    const out = document.createElement('canvas');
+    out.width = 720;
+    out.height = 720;
+    const ctx = out.getContext('2d');
+    const scale = 720 / st.w;
+    const s = cropScale();
+    ctx.scale(scale, scale);
+    ctx.translate(st.w / 2 + st.ox, st.h / 2 + st.oy);
+    ctx.scale(s, s);
+    ctx.drawImage(st.img, -st.img.naturalWidth / 2, -st.img.naturalHeight / 2);
+
+    out.toBlob((blob) => {
+      if (!blob) { toast('裁切失败，请重试', 2600); return; }
+      if (editState.tempUrl) URL.revokeObjectURL(editState.tempUrl);
+      editState.coverBlob = blob;
+      editState.tempUrl = URL.createObjectURL(blob);
+      renderEditCover();
+      closeCropper();
+      toast('封面已裁好，点保存生效', 1800);
+    }, 'image/jpeg', 0.86);
+  }
+
+  function cropPoint(e) {
+    const r = el.cropViewport.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
   function updateDescCount() {
@@ -1142,15 +1268,12 @@
     node.innerHTML = '';
     node.classList.add('mosaic');
 
-    // 按书的数量决定宫格：1 本占满、2 本两栏、3 本以上 2×2
-    const count = Math.min(4, Math.max(1, list.length));
-    node.style.gridTemplateColumns = count === 1 ? '1fr' : '1fr 1fr';
-    node.style.gridTemplateRows = count <= 2 ? '1fr' : '1fr 1fr';
-
-    const ids = (col.bookIds || []).slice(0, 4);
-    for (let i = 0; i < count; i++) {
+    // 九宫格：最多显示 9 本；不足 9 本用空位补齐，超过 9 本在最后一格叠 +N
+    const ids = (col.bookIds || []).slice(0, 9);
+    for (let i = 0; i < 9; i++) {
       const cell = document.createElement('span');
       cell.className = 'mosaic-cell';
+
       const book = state.books.find(b => b.id === ids[i]);
       if (book) {
         const url = coverUrlOf(book);
@@ -1165,11 +1288,14 @@
           t.textContent = (book.title || '书').slice(0, 1);
           cell.appendChild(t);
         }
+      } else {
+        cell.classList.add('blank');
       }
-      if (i === count - 1 && list.length > count) {
+
+      if (i === 8 && list.length > 9) {
         const more = document.createElement('span');
         more.className = 'mosaic-more';
-        more.textContent = '+' + (list.length - count + 1);
+        more.textContent = '+' + (list.length - 8);
         cell.appendChild(more);
       }
       node.appendChild(cell);
@@ -3507,19 +3633,76 @@
     });
 
     el.uploadCoverBtn.addEventListener('click', () => el.coverInput.click());
-    el.coverInput.addEventListener('change', async (e) => {
+    el.coverInput.addEventListener('change', (e) => {
       const f = e.target.files && e.target.files[0];
       e.target.value = '';
       if (!f) return;
       if (!/^image\//.test(f.type)) { toast('请选择图片文件'); return; }
-      const blob = await toSquareCover(f);
-      console.log('[cover] 选择封面', f.name, f.type, f.size, '->', blob && blob.type, blob && blob.size);
-      if (!blob) { toast('封面处理失败，请换一张图试试'); return; }
-      if (editState.tempUrl) URL.revokeObjectURL(editState.tempUrl);
-      editState.coverBlob = blob;
-      editState.tempUrl = URL.createObjectURL(blob);
-      renderEditCover();
-      toast('封面已选择，点保存生效', 1600);
+      openCropper(f);
+    });
+
+    /* ---- 封面裁切 ---- */
+    el.cropSave.addEventListener('click', applyCrop);
+    el.cropCancel.addEventListener('click', closeCropper);
+    el.cropClose.addEventListener('click', closeCropper);
+    el.cropReset.addEventListener('click', resetCrop);
+    el.cropZoom.addEventListener('input', () => setCropZoom(el.cropZoom.value));
+    el.cropSheet.addEventListener('click', (e) => { if (e.target === el.cropSheet) closeCropper(); });
+
+    el.cropViewport.addEventListener('pointerdown', (e) => {
+      if (!cropState.img) return;
+      el.cropViewport.setPointerCapture(e.pointerId);
+      cropState.pointers.set(e.pointerId, cropPoint(e));
+      if (cropState.pointers.size === 2) {
+        const [a, b] = [...cropState.pointers.values()];
+        cropState.pinch = {
+          dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+          zoom: cropState.zoom,
+          cx: (a.x + b.x) / 2,
+          cy: (a.y + b.y) / 2,
+        };
+      }
+    });
+    el.cropViewport.addEventListener('pointermove', (e) => {
+      if (!cropState.img || !cropState.pointers.has(e.pointerId)) return;
+      const prev = cropState.pointers.get(e.pointerId);
+      const now = cropPoint(e);
+      cropState.pointers.set(e.pointerId, now);
+      if (cropState.pointers.size >= 2 && cropState.pinch) {
+        const [a, b] = [...cropState.pointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        cropState.zoom = Math.max(1, Math.min(4, cropState.pinch.zoom * (dist / cropState.pinch.dist)));
+        cropState.ox += mid.x - cropState.pinch.cx;
+        cropState.oy += mid.y - cropState.pinch.cy;
+        cropState.pinch.cx = mid.x;
+        cropState.pinch.cy = mid.y;
+        el.cropZoom.value = String(cropState.zoom);
+      } else {
+        cropState.ox += now.x - prev.x;
+        cropState.oy += now.y - prev.y;
+      }
+      clampCrop();
+      drawCrop();
+      e.preventDefault();
+    });
+    function endCropPointer(e) {
+      cropState.pointers.delete(e.pointerId);
+      if (cropState.pointers.size < 2) cropState.pinch = null;
+    }
+    el.cropViewport.addEventListener('pointerup', endCropPointer);
+    el.cropViewport.addEventListener('pointercancel', endCropPointer);
+    el.cropViewport.addEventListener('wheel', (e) => {
+      if (!cropState.img) return;
+      e.preventDefault();
+      setCropZoom(cropState.zoom * Math.exp(-e.deltaY * 0.0015));
+    }, { passive: false });
+    window.addEventListener('resize', () => {
+      if (!el.cropSheet.hidden) {
+        initCropCanvas();
+        clampCrop();
+        drawCrop();
+      }
     });
 
     /* ---- 合集 ---- */

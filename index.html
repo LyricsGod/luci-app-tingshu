@@ -392,7 +392,7 @@
           </button>
           <button id="shuffleCoverBtn" class="btn ghost small">换个配色</button>
           <button id="resetCoverBtn" class="btn ghost small">恢复默认</button>
-          <p class="muted tiny">支持 jpg / png / webp，会自动裁成方形</p>
+          <p class="muted tiny">支持 jpg / png / webp，可自由缩放、拖动裁切</p>
         </div>
       </div>
 
@@ -418,6 +418,36 @@
       <span class="foot-spacer"></span>
       <button id="editCancel" class="btn ghost">取消</button>
       <button id="editSave" class="btn primary">保存</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ============ 裁切封面 ============ -->
+<div id="cropSheet" class="modal" hidden>
+  <div class="modal-card crop-card" role="dialog" aria-modal="true" aria-labelledby="cropHeading">
+    <header class="modal-head">
+      <h3 id="cropHeading">裁切封面</h3>
+      <button id="cropClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <div id="cropViewport" class="crop-viewport">
+        <canvas id="cropCanvas"></canvas>
+      </div>
+      <label class="crop-zoom">
+        <span>缩放</span>
+        <input id="cropZoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="缩放">
+      </label>
+      <p class="muted tiny crop-tip">拖动图片调整位置，滚轮或双指缩放；方框里的画面会作为封面。</p>
+    </div>
+
+    <footer class="modal-foot">
+      <button id="cropReset" class="btn ghost">重置</button>
+      <span class="foot-spacer"></span>
+      <button id="cropCancel" class="btn ghost">取消</button>
+      <button id="cropSave" class="btn primary">使用这张</button>
     </footer>
   </div>
 </div>
