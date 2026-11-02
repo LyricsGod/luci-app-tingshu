@@ -13,10 +13,11 @@
 ## 功能
 
 - **书架**：按文件夹自动分书，封面可以是文件夹里的图，也可以自己传或选配色
-- **播放**：断点续播、±30 秒、0.5×–3× 倍速、定时关闭（15 分钟到 90 分钟，或「播完本章」）
-- **进度**：存在路由器上，多台设备自动同步；也能导出/导入 JSON 备份
+- **播放**：断点续播、±30 秒、0.5×–3× 倍速、定时关闭（15 分钟到 90 分钟，或「播完本章」）；后台/锁屏时自动预取下一章，播完无缝续下一集
+- **多端同步**：进度、合集、书名/简介/配色/封面、暂停记录，都存在路由器上，多台设备自动同步
+- **暂停记录**：每次暂停（手动暂停、定时到点、开启定时）都自动记一笔，可在书籍页里查看、跳转续播、删除或清空
 - **合集**：像手机桌面文件夹一样，把几本书收进一个盒子，顺序可拖动调整
-- **管理**：网页里直接上传书籍（文件夹或 zip / tar.gz）、删除书籍，不用进文件管理
+- **管理**：网页里直接上传书籍（文件夹或 zip / tar.gz）、删除书籍，不用进文件管理；点击首页「听书」图标可查看版本号
 
 ## 安装
 
@@ -59,7 +60,7 @@ opkg install /tmp/luci-app-tingshu_1.0.0-1_all.ipk
 |---|---|
 | 书库索引 | `/tmp/tingshu/www/library.json`（重启自动重建） |
 | 听书进度 | `/etc/tingshu/progress/<hex>.json`（重装系统前记得备份） |
-| 书名/封面/合集 | 存在各设备浏览器的 IndexedDB 里 |
+| 书名/封面/合集/暂停记录 | `/etc/tingshu/*.json`（同步到服务器，多端共享） |
 
 进度导出入口：网页顶栏的下载图标 → 导出 JSON。
 
@@ -103,6 +104,9 @@ openwrt/
     usr/lib/tingshu/scan.sh          扫目录生成 library.json
     usr/lib/tingshu/api/progress     进度读写 CGI
     usr/lib/tingshu/api/manage       上传/删除/重扫 CGI
+    usr/lib/tingshu/api/collections  合集同步 CGI
+    usr/lib/tingshu/api/meta         书名/简介/封面同步 CGI
+    usr/lib/tingshu/api/pausemarks   暂停记录同步 CGI
   htdocs/.../view/tingshu/main.js    LuCI 页面
 build_ipk.py                         不依赖 SDK 的打包脚本
 ```

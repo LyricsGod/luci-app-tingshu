@@ -305,7 +305,7 @@
   function showVersionInfo() {
     const boot = window.__BOOT_STAMP__;
     const build = window.__BUILD_VER__;
-    const appVersion = '1.1.0';
+    const appVersion = '1.2.0';
     let info = '听书 v' + appVersion;
     if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
     if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
