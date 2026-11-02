@@ -40,6 +40,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -85,7 +86,7 @@ fun PlayerScreen(
     onSeekBy: (Long) -> Unit,
     onSeekTo: (Long) -> Unit,
     onSelectSpeed: (Float) -> Unit,
-    onSleepMinutes: (Int) -> Unit,
+    onSleepMinutes: (Int, Boolean) -> Unit,
     onSleepChapterEnd: () -> Unit,
     onCancelSleep: () -> Unit,
     onSelectChapter: (Int) -> Unit,
@@ -116,6 +117,9 @@ fun PlayerScreen(
     var showChapters by remember { mutableStateOf(false) }
     var showSpeed by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
+    var finishChapter by remember(sleep.active, sleep.finishCurrentChapter) {
+        mutableStateOf(sleep.finishCurrentChapter)
+    }
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -403,13 +407,33 @@ fun PlayerScreen(
             title = { Text("定时关闭") },
             text = {
                 Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("到点后播完本集再暂停", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "计时结束时先听完当前这一集",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = finishChapter,
+                            onCheckedChange = { finishChapter = it },
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
                     SLEEP_MINUTES.forEach { minutes ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable {
-                                    onSleepMinutes(minutes)
+                                    onSleepMinutes(minutes, finishChapter)
                                     showSleep = false
                                 }
                                 .padding(vertical = 2.dp),
@@ -418,7 +442,7 @@ fun PlayerScreen(
                             RadioButton(
                                 selected = sleep.active && !sleep.atChapterEnd && sleep.minutes == minutes,
                                 onClick = {
-                                    onSleepMinutes(minutes)
+                                    onSleepMinutes(minutes, finishChapter)
                                     showSleep = false
                                 },
                             )
@@ -443,7 +467,7 @@ fun PlayerScreen(
                                 showSleep = false
                             },
                         )
-                        Text("本章播完后暂停", style = MaterialTheme.typography.bodyLarge)
+                            Text("本章播完后暂停", style = MaterialTheme.typography.bodyLarge)
                     }
                     if (sleep.active) {
                         TextButton(
@@ -526,11 +550,14 @@ fun PlayerScreen(
 
 private fun sleepLabel(sleep: SleepState, now: Long): String {
     if (!sleep.active) return "定时"
-    if (sleep.atChapterEnd) return "本章后停"
+    if (sleep.atChapterEnd) {
+        return if (sleep.finishCurrentChapter) "本集后停" else "本章后停"
+    }
     val leftSeconds = ((sleep.endsAt - now) / 1000L).coerceAtLeast(0L)
-    return when {
+    val text = when {
         leftSeconds >= 60 -> "${leftSeconds / 60} 分钟后停"
         leftSeconds > 0 -> "${leftSeconds} 秒后停"
         else -> "即将暂停"
     }
+    return if (sleep.finishCurrentChapter) text.replace("后停", "后本集停") else text
 }

@@ -2,20 +2,27 @@ package com.tingshu.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +34,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -46,11 +54,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +71,9 @@ import com.tingshu.app.data.Progress
 import com.tingshu.app.ui.TingshuViewModel
 import com.tingshu.app.ui.components.BookCover
 import com.tingshu.app.ui.components.bookDoneCount
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import com.tingshu.app.ui.components.bookFraction
 import com.tingshu.app.ui.components.bookPercent
 import com.tingshu.app.ui.components.formatTime
@@ -93,6 +107,18 @@ fun BookScreen(
     var showMarks by remember { mutableStateOf(false) }
     var showCollections by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+
+    val chapterListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var ascending by rememberSaveable(book.id) { mutableStateOf(true) }
+    var seekJob by remember { mutableStateOf<Job?>(null) }
+    val displayIndices: List<Int> = remember(book.tracks, ascending) {
+        if (ascending) book.tracks.indices.toList() else book.tracks.indices.reversed().toList()
+    }
+    val chapterStart = (chapterListState.layoutInfo.totalItemsCount - book.chapterCount).coerceAtLeast(0)
+    val visibleChapterPos = (chapterListState.firstVisibleItemIndex - chapterStart)
+        .coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
+    val visibleChapterNumber = displayIndices.getOrNull(visibleChapterPos)?.plus(1) ?: 1
 
     fun start(fromBeginning: Boolean = false) {
         vm.playBook(book, fromBeginning = fromBeginning)
@@ -162,9 +188,11 @@ fun BookScreen(
             )
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 32.dp),
+            state = chapterListState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 32.dp, end = 34.dp),
         ) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
@@ -349,7 +377,7 @@ fun BookScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp),
+                        .padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("目录", style = MaterialTheme.typography.titleMedium)
@@ -359,22 +387,50 @@ fun BookScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant,
                     )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { ascending = !ascending }) {
+                        Icon(Icons.Rounded.SwapVert, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(2.dp))
+                        Text(if (ascending) "倒序" else "正序", fontSize = 12.sp)
+                    }
                 }
             }
 
-            itemsIndexed(book.tracks) { index, track ->
-                val isPlayingThis = isCurrent && playerState.index == index
-                val done = record?.done?.contains(index) == true
+            itemsIndexed(displayIndices, key = { _, actualIndex -> actualIndex }) { _, actualIndex ->
+                val track = book.tracks[actualIndex]
+                val isPlayingThis = isCurrent && playerState.index == actualIndex
+                val done = record?.done?.contains(actualIndex) == true
                 ChapterRow(
-                    index = index,
+                    index = actualIndex,
                     title = track.title,
                     current = isPlayingThis,
                     done = done,
                     playing = isPlayingThis && playing,
                     onClick = {
-                        vm.playBook(book, startIndex = index, fromBeginning = true)
+                        vm.playBook(book, startIndex = actualIndex, fromBeginning = true)
                         onOpenPlayer()
                     },
+                )
+            }
+        }
+
+            if (book.chapterCount > 3) {
+                ChapterScrollBar(
+                    total = book.chapterCount,
+                    value = visibleChapterPos,
+                    label = visibleChapterNumber,
+                    onSeek = { target ->
+                        seekJob?.cancel()
+                        seekJob = scope.launch {
+                            val maxIndex = (chapterListState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            chapterListState.scrollToItem((chapterStart + target).coerceIn(0, maxIndex))
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 4.dp, top = 8.dp, bottom = 12.dp)
+                        .width(30.dp)
+                        .fillMaxHeight(),
                 )
             }
         }
@@ -393,6 +449,66 @@ fun BookScreen(
     }
     if (showCollections) {
         AddToCollectionDialog(vm = vm, book = book, onDismiss = { showCollections = false })
+    }
+}
+
+@Composable
+private fun ChapterScrollBar(
+    total: Int,
+    value: Int,
+    label: Int,
+    onSeek: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (total <= 1) return
+    val colors = MaterialTheme.colorScheme
+    BoxWithConstraints(modifier) {
+        val thumbHeight = 42.dp
+        val fraction = (value.toFloat() / (total - 1)).coerceIn(0f, 1f)
+
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(50))
+                .background(colors.outlineVariant)
+        )
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (maxHeight - thumbHeight) * fraction)
+                .width(26.dp)
+                .height(thumbHeight)
+                .clip(RoundedCornerShape(13.dp))
+                .background(colors.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "$label",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onPrimary,
+                maxLines = 1,
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(total) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun seekAt(y: Float) {
+                            val idx = ((y / size.height) * (total - 1)).roundToInt()
+                            onSeek(idx.coerceIn(0, total - 1))
+                        }
+                        seekAt(down.position.y)
+                        drag(down.id) { change ->
+                            seekAt(change.position.y)
+                            change.consume()
+                        }
+                    }
+                }
+        )
     }
 }
 

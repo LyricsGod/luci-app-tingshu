@@ -55,6 +55,7 @@ data class SleepState(
     val endsAt: Long = 0L,
     val minutes: Int = 0,
     val atChapterEnd: Boolean = false,
+    val finishCurrentChapter: Boolean = false,
 )
 
 /**
@@ -1226,7 +1227,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
 
     /* ---------------- 定时关闭 ---------------- */
 
-    fun setSleepMinutes(minutes: Int) {
+    fun setSleepMinutes(minutes: Int, finishCurrentChapter: Boolean = false) {
         if (playerState.value.bookId != null) {
             recordPauseMark("timer-start")
         }
@@ -1234,9 +1235,13 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             active = true,
             endsAt = System.currentTimeMillis() + minutes * 60_000L,
             minutes = minutes,
+            finishCurrentChapter = finishCurrentChapter,
         )
         armSleep()
-        messages.tryEmit("$minutes 分钟后暂停")
+        messages.tryEmit(
+            if (finishCurrentChapter) "$minutes 分钟后播完本集暂停"
+            else "$minutes 分钟后暂停"
+        )
     }
 
     fun setSleepAtChapterEnd() {
@@ -1262,10 +1267,20 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             while (isActive) {
                 val left = current.endsAt - System.currentTimeMillis()
                 if (left <= 0) {
-                    addPauseMark("timer", playerState.value)
-                    player.pause()
-                    sleep.value = SleepState()
-                    messages.tryEmit("定时结束，已暂停")
+                    if (current.finishCurrentChapter && playerState.value.isPlaying) {
+                        // 到点后不立刻停，等当前这一集播完；onTransition 会处理暂停
+                        sleep.value = SleepState(
+                            active = true,
+                            atChapterEnd = true,
+                            finishCurrentChapter = true,
+                        )
+                        messages.tryEmit("定时到点，本集播完后暂停")
+                    } else {
+                        addPauseMark("timer", playerState.value)
+                        player.pause()
+                        sleep.value = SleepState()
+                        messages.tryEmit("定时结束，已暂停")
+                    }
                     break
                 }
                 delay(1000)

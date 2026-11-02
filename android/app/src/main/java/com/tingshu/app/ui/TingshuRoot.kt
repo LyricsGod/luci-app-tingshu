@@ -142,7 +142,9 @@ fun TingshuRoot(vm: TingshuViewModel) {
                         onSeekBy = { vm.seekBy(it) },
                         onSeekTo = { vm.seekTo(it) },
                         onSelectSpeed = { vm.setSpeed(it) },
-                        onSleepMinutes = { vm.setSleepMinutes(it) },
+                        onSleepMinutes = { minutes, finishChapter ->
+                            vm.setSleepMinutes(minutes, finishChapter)
+                        },
                         onSleepChapterEnd = { vm.setSleepAtChapterEnd() },
                         onCancelSleep = { vm.cancelSleep() },
                         onSelectChapter = { index ->
