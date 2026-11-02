@@ -28,7 +28,7 @@
 
 ![安卓客户端书架](android/docs/screenshots/library.png)
 
-去 [Releases](../../releases) 下载 `tingshu-android-1.3.1.apk` 安装（Android 8.0+）。第一次打开：
+去 [Releases](../../releases) 下载 `tingshu-android-1.3.2.apk` 安装（Android 8.0+）。第一次打开：
 
 1. 手机连上和路由器同一个 Wi-Fi
 2. 地址已预填 `192.168.2.1:8686`（换路由器直接改，或点「扫描局域网」自动发现）

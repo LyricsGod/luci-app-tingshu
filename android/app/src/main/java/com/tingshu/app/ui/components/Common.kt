@@ -85,6 +85,7 @@ fun BookCover(
     modifier: Modifier = Modifier,
     corner: Dp = 14.dp,
     showTitle: Boolean = true,
+    compactTitle: Boolean = false,
     titleStyle: TextStyle? = null,
 ) {
     val shape = RoundedCornerShape(corner)
@@ -101,15 +102,19 @@ fun BookCover(
                 )
             } else if (showTitle) {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(14.dp),
+                    modifier = Modifier.fillMaxSize().padding(if (compactTitle) 4.dp else 14.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
                         text = book.title,
-                        style = titleStyle ?: MaterialTheme.typography.titleSmall,
+                        style = titleStyle ?: if (compactTitle) {
+                            MaterialTheme.typography.labelSmall
+                        } else {
+                            MaterialTheme.typography.titleSmall
+                        },
                         color = Color(0xFFFFF8F0),
-                        maxLines = 4,
+                        maxLines = if (compactTitle) 2 else 4,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
                     )
@@ -178,7 +183,8 @@ fun CollectionCover(
                                         book = book,
                                         modifier = Modifier.fillMaxSize(),
                                         corner = 3.dp,
-                                        showTitle = false,
+                                        showTitle = true,
+                                        compactTitle = true,
                                     )
                                 } else {
                                     Box(

@@ -1,8 +1,10 @@
 package com.tingshu.app.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -545,6 +547,7 @@ private fun CollectionCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
     book: Book,
@@ -556,7 +559,12 @@ private fun BookCard(
     val finished = bookFinished(book, record)
     val done = bookDoneCount(book, record)
 
-    Column(Modifier.clickable(onClick = onClick)) {
+    Column(
+        Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = onEdit,
+        )
+    ) {
         Box {
             BookCover(
                 book = book,
@@ -573,24 +581,6 @@ private fun BookCard(
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
                     Text("已听完", style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
-                }
-            } else if (onEdit != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(colors.surface.copy(alpha = 0.86f))
-                        .clickable(onClick = onEdit),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Edit,
-                        contentDescription = "编辑",
-                        tint = colors.onSurfaceVariant,
-                        modifier = Modifier.size(15.dp),
-                    )
                 }
             }
         }

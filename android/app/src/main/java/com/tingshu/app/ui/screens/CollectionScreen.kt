@@ -1,5 +1,6 @@
 package com.tingshu.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -87,6 +88,11 @@ fun CollectionScreen(
     val booksById = remember(books) { books.associateBy { it.id } }
     val list = collection.bookIds.mapNotNull { booksById[it] }
     val doneCount = list.count { bookFinished(it, progress[it.id]) }
+
+    // 系统返回 / 侧滑手势：排序中先退出排序，否则回书架
+    BackHandler {
+        if (sorting) sorting = false else onBack()
+    }
 
     Scaffold(
         containerColor = colors.background,
