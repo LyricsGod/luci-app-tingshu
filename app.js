@@ -125,7 +125,7 @@
     exportBtn: $('#exportBtn'),
     importBtn: $('#importBtn'),
     progressFileInput: $('#progressFileInput'),
-    pausemarksBtn: $('#pausemarksBtn'),
+    bookMarksBtn: $('#bookMarksBtn'),
     pausemarksSheet: $('#pausemarksSheet'),
     pausemarksClose: $('#pausemarksClose'),
     pausemarksList: $('#pausemarksList'),
@@ -185,6 +185,9 @@
   let loadToken = 0;
   let prefetchCache = null;   // 预取的下一章 { bookId, index, file }，后台切章时避免 fetch 挂起
   let prefetchToken = 0;
+  let switchingTrack = false;  // 正在切换章节（此时触发的 pause 不记录为暂停）
+  let switchingTrackTimer = null;
+  let timerPausing = false;    // 定时到点正在暂停（此时 pause 事件按 'timer' 记录，避免重复）
   let lastSaveAt = 0;
   let sleepTimer = null;
   let fadeTimer = null;
@@ -1591,6 +1594,11 @@
     state.current = { book, index };
     setMiniVisible(true);
 
+    // 切章标志：接下来因 load 触发的 pause 不应记录为「暂停」
+    switchingTrack = true;
+    clearTimeout(switchingTrackTimer);
+    switchingTrackTimer = setTimeout(() => { switchingTrack = false; }, 600);
+
     // 立即把这本书标记为「最近收听」，书架排序和继续收听卡片随之更新
     const prog = ensureProgress(book.id);
     prog.index = index;
@@ -2932,11 +2940,13 @@
       const finishTrack = !!state.settings.sleepFinish;
       state.sleep = { mode: 'time', endsAt: Date.now() + minutes * 60000, minutes, finishTrack, pending: false };
       sleepTimer = setInterval(tickSleep, 500);
+      if (state.current) recordPauseMark('timer-start');
       toast(finishTrack
         ? `${minutes} 分钟到点后，本节播完再暂停`
         : `将在 ${minutes} 分钟后暂停`);
     } else if (mode === 'chapter') {
       state.sleep = { mode: 'chapter', endsAt: 0, minutes: 0, pending: false };
+      if (state.current) recordPauseMark('timer-start');
       toast('本章播完后自动暂停');
     } else {
       state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
@@ -2990,11 +3000,11 @@
         clearInterval(fadeTimer);
         clearInterval(sleepTimer);
         fadeTimer = null;
+        timerPausing = true;
         el.audio.pause();
         el.audio.volume = base;
         state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
         updateTimerUI();
-        recordPauseMark();
         toast('已按定时暂停');
       }
     }, 320);
@@ -3033,13 +3043,13 @@
 
   /* ================= 定时暂停记录 ================= */
 
-  // 定时到点暂停时，记录一条「暂停记录」，之后可列表选择继续播放
-  function recordPauseMark() {
+  // 记录一次暂停位置。reason: 'pause' 手动/自动暂停、'timer' 定时到点、'timer-start' 开启定时
+  function recordPauseMark(reason = 'pause') {
     const c = state.current;
     if (!c) return;
     const t = c.book.tracks[c.index];
     const time = Math.max(0, el.audio.currentTime || 0);
-    if (time < 1) return;  // 刚开始就停了，不值得记
+    if (time < 1 && reason !== 'timer-start') return;  // 刚开始就停了，不值得记（开启定时例外）
 
     const mark = {
       id: 'pm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
@@ -3048,15 +3058,17 @@
       index: c.index,
       trackTitle: t.title || t.name || `第 ${c.index + 1} 章`,
       time,
+      reason,
       createdAt: Date.now(),
     };
     dbPut('pausemarks', mark).catch(() => {});
   }
 
-  async function loadPauseMarks() {
+  async function loadPauseMarks(bookId) {
     let marks = [];
     try { marks = await dbAll('pausemarks'); } catch { marks = []; }
-    return (marks || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    marks = (marks || []).filter(m => !bookId || m.bookId === bookId);
+    return marks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }
 
   function fmtStamp(ts) {
@@ -3065,10 +3077,16 @@
     return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  async function openPauseMarks() {
+  const REASON_LABEL = {
+    'pause': '暂停',
+    'timer': '定时暂停',
+    'timer-start': '开启定时',
+  };
+
+  async function openPauseMarks(bookId) {
     el.pausemarksSheet.hidden = false;
     syncBodyScroll();
-    await renderPauseMarks();
+    await renderPauseMarks(bookId);
   }
 
   function closePauseMarks() {
@@ -3076,13 +3094,13 @@
     syncBodyScroll();
   }
 
-  async function renderPauseMarks() {
-    const marks = await loadPauseMarks();
+  async function renderPauseMarks(bookId) {
+    const marks = await loadPauseMarks(bookId);
     el.pmCount.textContent = marks.length ? `${marks.length} 条记录` : '';
     el.pmClearBtn.hidden = marks.length === 0;
 
     if (!marks.length) {
-      el.pausemarksList.innerHTML = '<li class="pm-empty">还没有定时暂停记录。<br>开启定时播放，到点暂停后会自动记一笔。</li>';
+      el.pausemarksList.innerHTML = '<li class="pm-empty">还没有暂停记录。<br>播放中暂停、或开启定时，都会自动记一笔。</li>';
       return;
     }
 
@@ -3100,7 +3118,7 @@
       title.textContent = m.bookTitle;
       const sub = document.createElement('div');
       sub.className = 'pm-sub';
-      sub.textContent = `${m.trackTitle} · ${fmtTime(m.time)} · ${fmtStamp(m.createdAt)}`;
+      sub.textContent = `${m.trackTitle} · ${fmtTime(m.time)} · ${REASON_LABEL[m.reason] || '暂停'} · ${fmtStamp(m.createdAt)}`;
       main.append(title, sub);
 
       const del = document.createElement('span');
@@ -3123,28 +3141,28 @@
 
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        deletePauseMark(m.id);
+        deletePauseMark(m.id, bookId);
       });
 
       el.pausemarksList.append(li);
     }
   }
 
-  async function deletePauseMark(id) {
+  async function deletePauseMark(id, bookId) {
     try { await dbDelete('pausemarks', id); } catch {}
     toast('已删除');
-    await renderPauseMarks();
+    await renderPauseMarks(bookId);
   }
 
-  async function clearPauseMarks() {
-    const marks = await loadPauseMarks();
+  async function clearPauseMarks(bookId) {
+    const marks = await loadPauseMarks(bookId);
     if (!marks.length) return;
-    if (!confirm(`确定清空全部 ${marks.length} 条暂停记录？`)) return;
+    if (!confirm(`确定清空这${bookId ? '本书' : '全部'}的 ${marks.length} 条暂停记录？`)) return;
     for (const m of marks) {
       try { await dbDelete('pausemarks', m.id); } catch {}
     }
     toast('已清空');
-    await renderPauseMarks();
+    await renderPauseMarks(bookId);
   }
 
   /* ================= 浮层 ================= */
@@ -3369,12 +3387,16 @@
     });
 
     /* ---- 定时暂停记录 ---- */
-    el.pausemarksBtn.addEventListener('click', openPauseMarks);
+    el.bookMarksBtn.addEventListener('click', () => {
+      if (state.bookView) openPauseMarks(state.bookView.id);
+    });
     el.pausemarksClose.addEventListener('click', closePauseMarks);
     el.pausemarksSheet.addEventListener('click', (e) => {
       if (e.target === el.pausemarksSheet) closePauseMarks();
     });
-    el.pmClearBtn.addEventListener('click', clearPauseMarks);
+    el.pmClearBtn.addEventListener('click', () => {
+      clearPauseMarks(state.bookView ? state.bookView.id : null);
+    });
 
     /* ---- 点击首页品牌显示版本 ---- */
     el.brand.addEventListener('click', showVersionInfo);
@@ -3610,6 +3632,12 @@
         state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
         updateTimerUI();
       }
+
+      // 记录一次暂停（排除切章、以及音频自然播完前的 pause）
+      if (!switchingTrack && !el.audio.ended && !atEnd) {
+        recordPauseMark(timerPausing ? 'timer' : 'pause');
+        timerPausing = false;
+      }
     });
 
     el.audio.addEventListener('ended', () => {
@@ -3626,7 +3654,7 @@
         el.audio.pause();
         saveProgress(true, true);
         updateTimerUI();
-        recordPauseMark();
+        recordPauseMark('timer');
         toast('本节播完，已按定时暂停', 3200);
         refreshBookView();
         return;
@@ -3636,7 +3664,7 @@
         setSleep('off');
         el.audio.pause();
         saveProgress(true, true);
-        recordPauseMark();
+        recordPauseMark('timer');
         toast('本章播完，已按定时暂停');
         refreshBookView();
         return;
