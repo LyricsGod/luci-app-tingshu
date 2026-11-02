@@ -28,6 +28,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
       <input id="searchInput" type="search" placeholder="搜索书名" autocomplete="off" spellcheck="false">
     </label>
+    <button id="userBtn" class="icon-btn user-btn" title="账号">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c.8-3.6 3.7-5.5 7.5-5.5s6.7 1.9 7.5 5.5"/></svg>
+      <span id="userLabel" class="user-label">登录</span>
+    </button>
     <button id="backupBtn" class="icon-btn" title="进度备份 / 恢复" aria-label="进度备份">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M8 10.5l4 4 4-4M4.8 16.5v2.2a1.6 1.6 0 0 0 1.6 1.6h11.2a1.6 1.6 0 0 0 1.6-1.6v-2.2"/></svg>
     </button>
@@ -57,6 +61,7 @@
           新建合集
         </button>
         <button id="sortBtn" class="btn ghost small" title="切换排序">最近收听</button>
+        <button id="layoutBtn" class="btn ghost small" title="每行显示几本">每行 2 本</button>
       </div>
     </div>
 
@@ -277,6 +282,76 @@
       <button id="colEditCancel" class="btn ghost">取消</button>
       <button id="colEditSave" class="btn primary">保存</button>
     </footer>
+  </div>
+</div>
+
+<!-- ============ 账号 ============ -->
+<div id="accountSheet" class="modal" hidden>
+  <div class="modal-card account-card" role="dialog" aria-modal="true" aria-labelledby="accountHeading">
+    <header class="modal-head">
+      <h3 id="accountHeading">账号</h3>
+      <button id="accountClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="modal-body">
+      <p id="accountInfo" class="account-info"></p>
+      <div class="account-actions">
+        <button id="accountUsersBtn" class="btn ghost" type="button">用户管理</button>
+        <button id="accountPasswordBtn" class="btn ghost" type="button">修改密码</button>
+        <button id="accountLogoutBtn" class="btn ghost danger" type="button">退出登录</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 登录 / 初始化管理员 ============ -->
+<div id="authSheet" class="modal auth-sheet" hidden>
+  <div class="modal-card auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="auth-logo" aria-hidden="true"><span>书</span></div>
+    <h2 id="authTitle">登录听书</h2>
+    <p id="authHint" class="muted">用管理员或普通用户账号登录。</p>
+    <form id="authForm" class="auth-form">
+      <label class="auth-field">
+        <span>用户名</span>
+        <input id="authUser" autocomplete="username" spellcheck="false" required>
+      </label>
+      <label class="auth-field">
+        <span>密码</span>
+        <input id="authPass" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="authError" class="auth-error" hidden></p>
+      <button id="authSubmit" class="btn primary large" type="submit">登录</button>
+    </form>
+    <p id="authFoot" class="muted tiny auth-foot"></p>
+  </div>
+</div>
+
+<!-- ============ 用户管理 ============ -->
+<div id="usersSheet" class="modal" hidden>
+  <div class="modal-card users-card" role="dialog" aria-modal="true" aria-labelledby="usersHeading">
+    <header class="modal-head">
+      <h3 id="usersHeading">用户管理</h3>
+      <button id="usersClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="modal-body">
+      <div id="userList" class="user-list"></div>
+      <form id="newUserForm" class="new-user-form">
+        <h4>创建用户</h4>
+        <div class="new-user-row">
+          <input id="newUserName" placeholder="用户名（字母数字 _ -）" autocomplete="off" spellcheck="false" required>
+          <input id="newUserPass" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password" required>
+          <select id="newUserRole" aria-label="角色">
+            <option value="user">普通用户</option>
+            <option value="admin">管理员</option>
+          </select>
+          <button class="btn primary" type="submit">创建</button>
+        </div>
+        <p id="usersMsg" class="muted tiny"></p>
+      </form>
+    </div>
   </div>
 </div>
 

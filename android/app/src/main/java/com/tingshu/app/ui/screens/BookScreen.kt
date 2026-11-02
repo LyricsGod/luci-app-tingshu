@@ -79,6 +79,8 @@ fun BookScreen(
     val progress by vm.progress.collectAsStateWithLifecycle()
     val playerState by vm.playerState.collectAsStateWithLifecycle()
     val collections by vm.collections.collectAsStateWithLifecycle()
+    val authRole by vm.authRole.collectAsStateWithLifecycle()
+    val isAdmin = authRole == "admin"
 
     val record = progress[book.id]
     val isCurrent = playerState.bookId == book.id
@@ -125,13 +127,15 @@ fun BookScreen(
                                     showCollections = true
                                 },
                             )
-                            DropdownMenuItem(
-                                text = { Text("编辑资料") },
-                                onClick = {
-                                    menuOpen = false
-                                    showEdit = true
-                                },
-                            )
+                            if (isAdmin) {
+                                DropdownMenuItem(
+                                    text = { Text("编辑资料") },
+                                    onClick = {
+                                        menuOpen = false
+                                        showEdit = true
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("暂停记录") },
                                 onClick = {
@@ -314,10 +318,12 @@ fun BookScreen(
                         Spacer(Modifier.width(4.dp))
                         Text("暂停记录", fontSize = 12.sp)
                     }
-                    TextButton(onClick = { showEdit = true }) {
-                        Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("编辑资料", fontSize = 12.sp)
+                    if (isAdmin) {
+                        TextButton(onClick = { showEdit = true }) {
+                            Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("编辑资料", fontSize = 12.sp)
+                        }
                     }
                     TextButton(onClick = { showCollections = true }) {
                         Icon(Icons.Rounded.Folder, null, Modifier.size(16.dp))

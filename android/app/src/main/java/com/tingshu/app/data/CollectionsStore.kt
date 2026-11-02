@@ -42,6 +42,10 @@ class CollectionsStore(context: Context) {
         prefs.edit().putString(KEY, toJson(list).toString()).apply()
     }
 
+    fun clear() {
+        prefs.edit().clear().apply()
+    }
+
     companion object {
         private const val KEY = "collections_json"
 

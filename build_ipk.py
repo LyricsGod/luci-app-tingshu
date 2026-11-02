@@ -22,7 +22,7 @@ import hashlib
 import tarfile
 
 NAME = 'luci-app-tingshu'
-VERSION = '1.3.0'
+VERSION = '1.4.0'
 RELEASE = '1'
 ARCH = 'all'
 
@@ -39,6 +39,9 @@ EXEC_FILES = {
     'usr/lib/tingshu/api/collections',
     'usr/lib/tingshu/api/meta',
     'usr/lib/tingshu/api/pausemarks',
+    'usr/lib/tingshu/api/auth',
+    'usr/lib/tingshu/api/users',
+    'usr/lib/tingshu/api/layout',
 }
 
 CONFFILES = ['/etc/config/tingshu']

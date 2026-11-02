@@ -23,12 +23,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingshu.app.ui.components.MiniPlayer
+import com.tingshu.app.ui.screens.AuthScreen
 import com.tingshu.app.ui.screens.BookScreen
 import com.tingshu.app.ui.screens.CollectionScreen
 import com.tingshu.app.ui.screens.LibraryScreen
 import com.tingshu.app.ui.screens.PlayerScreen
 import com.tingshu.app.ui.screens.SettingsScreen
-import com.tingshu.app.ui.screens.SetupScreen
 
 @Composable
 fun TingshuRoot(vm: TingshuViewModel) {
@@ -37,6 +37,7 @@ fun TingshuRoot(vm: TingshuViewModel) {
     val serverUrl by vm.serverUrl.collectAsStateWithLifecycle()
     val playerState by vm.playerState.collectAsStateWithLifecycle()
     val sleep by vm.sleep.collectAsStateWithLifecycle()
+    val needsLogin by vm.needsLogin.collectAsStateWithLifecycle()
 
     var route by rememberSaveable { mutableStateOf("library") }
     var currentBookId by rememberSaveable { mutableStateOf("") }
@@ -73,8 +74,8 @@ fun TingshuRoot(vm: TingshuViewModel) {
         }
     }
 
-    if (serverUrl.isBlank() && books.isEmpty()) {
-        SetupScreen(vm)
+    if (needsLogin) {
+        AuthScreen(vm)
         return
     }
 

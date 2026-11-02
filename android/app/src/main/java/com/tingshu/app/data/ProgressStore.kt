@@ -35,8 +35,7 @@ class ProgressStore(context: Context) {
         return out
     }
 
-    fun save(map: Map<String, Progress>) {
-        val json = JSONObject()
+    fun save(map: Map<String, Progress>) {        val json = JSONObject()
         for ((bookId, p) in map) {
             json.put(
                 bookId,
@@ -48,6 +47,10 @@ class ProgressStore(context: Context) {
             )
         }
         prefs.edit().putString(KEY_MAP, json.toString()).apply()
+    }
+
+    fun clear() {
+        prefs.edit().clear().apply()
     }
 
     private companion object {

@@ -8,7 +8,10 @@
 # 数据放在 /etc/tingshu/pausemarks.json（overlay，重启不丢）
 # 记录数量有限，总是整体读写，用单个文件存整个列表。
 
-DATA_FILE="${TINGSHU_PAUSEMARKS_FILE:-/etc/tingshu/pausemarks.json}"
+. /usr/lib/tingshu/auth.sh
+ts_require_auth
+
+DATA_FILE="${TINGSHU_PAUSEMARKS_FILE:-$TS_USERS_DIR/$TS_USER/pausemarks.json}"
 
 hdr() {
 	printf 'Content-Type: application/json; charset=utf-8\r\n'

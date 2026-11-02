@@ -56,6 +56,7 @@ import com.tingshu.app.ui.TingshuViewModel
 import com.tingshu.app.ui.dialogs.BackupDialog
 import com.tingshu.app.ui.dialogs.PauseMarksDialog
 import com.tingshu.app.ui.dialogs.UploadDialog
+import com.tingshu.app.ui.dialogs.UsersDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,11 +78,16 @@ fun SettingsScreen(
     val theme by vm.theme.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val pauseMarks by vm.pauseMarks.collectAsStateWithLifecycle()
+    val authUser by vm.authUser.collectAsStateWithLifecycle()
+    val authRole by vm.authRole.collectAsStateWithLifecycle()
+    val columns by vm.columns.collectAsStateWithLifecycle()
+    val isAdmin = authRole == "admin"
 
     var address by rememberSaveable(serverUrl) { mutableStateOf(Urls.hostLabel(serverUrl)) }
     var showBackup by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
     var showUpload by remember { mutableStateOf(false) }
+    var showUsers by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = colors.background,
@@ -107,6 +113,15 @@ fun SettingsScreen(
                 .padding(horizontal = 18.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            SectionCard("账号") {
+                InfoLine("当前用户", authUser.ifBlank { "未登录" })
+                InfoLine("角色", if (isAdmin) "管理员" else "普通用户")
+                if (isAdmin) {
+                    ActionRow("用户管理（创建用户 / 重置密码）") { showUsers = true }
+                }
+                ActionRow("退出登录") { vm.logout() }
+            }
+
             SectionCard("服务器") {
                 Text(
                     text = serverUrl.ifBlank { "未设置" },
@@ -185,12 +200,35 @@ fun SettingsScreen(
                 }
             }
 
+            SectionCard("首页布局") {
+                Text(
+                    "每行显示几本（每个账号独立保存）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(2, 3, 4, 5).forEach { n ->
+                        FilterChip(
+                            selected = columns == n,
+                            onClick = { vm.setColumns(n) },
+                            label = { Text("$n 列") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = colors.primaryContainer,
+                                selectedLabelColor = colors.primary,
+                            ),
+                        )
+                    }
+                }
+            }
+
             SectionCard("书库") {
                 InfoLine("书籍", "${books.size} 本")
                 InfoLine("章节", "${books.sumOf { it.chapterCount }} 章")
                 if (libraryRoot.isNotBlank()) InfoLine("路由器目录", libraryRoot)
-                ActionRow("上传书籍（文件夹 / 压缩包）") { showUpload = true }
-                ActionRow("重新扫描路由器书库", busy = rescanning) { vm.rescanLibrary() }
+                if (isAdmin) {
+                    ActionRow("上传书籍（文件夹 / 压缩包）") { showUpload = true }
+                    ActionRow("重新扫描路由器书库", busy = rescanning) { vm.rescanLibrary() }
+                }
                 ActionRow("刷新书架", busy = refreshing) { vm.reload() }
             }
 
@@ -202,8 +240,8 @@ fun SettingsScreen(
             }
 
             SectionCard("关于") {
-                InfoLine("客户端版本", "1.2.1")
-                InfoLine("接口", "/cgi-ts · 听书 1.3.x")
+                InfoLine("客户端版本", "1.3.0")
+                InfoLine("接口", "/cgi-ts · 听书 1.4.x")
                 ActionRow("在浏览器中打开网页版") {
                     if (serverUrl.isNotBlank()) {
                         runCatching {
@@ -216,10 +254,10 @@ fun SettingsScreen(
             }
 
             TextButton(
-                onClick = { vm.disconnect() },
+                onClick = { vm.logout() },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("断开服务器", color = colors.error)
+                Text("退出登录", color = colors.error)
             }
             Spacer(Modifier.height(16.dp))
         }
@@ -238,6 +276,9 @@ fun SettingsScreen(
     }
     if (showUpload) {
         UploadDialog(vm = vm, onDismiss = { showUpload = false })
+    }
+    if (showUsers) {
+        UsersDialog(vm = vm, onDismiss = { showUsers = false })
     }
 }
 

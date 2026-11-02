@@ -9,7 +9,10 @@
 # 数据放在 /etc/tingshu/progress/<hexId>.json（overlay，重启不丢）
 # 书 id 由前端转成十六进制，这里只接受 [0-9a-f]，避免任何路径/注入问题。
 
-DATA_DIR="${TINGSHU_PROGRESS_DIR:-/etc/tingshu/progress}"
+. /usr/lib/tingshu/auth.sh
+ts_require_auth
+
+DATA_DIR="${TINGSHU_PROGRESS_DIR:-$TS_USERS_DIR/$TS_USER/progress}"
 mkdir -p "$DATA_DIR" 2>/dev/null
 
 hdr() {

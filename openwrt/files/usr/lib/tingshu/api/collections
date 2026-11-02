@@ -8,7 +8,10 @@
 # 数据放在 /etc/tingshu/collections.json（overlay，重启不丢）
 # 合集数量少、且总是整体读写，所以用单个文件存整个列表。
 
-DATA_FILE="${TINGSHU_COLLECTIONS_FILE:-/etc/tingshu/collections.json}"
+. /usr/lib/tingshu/auth.sh
+ts_require_auth
+
+DATA_FILE="${TINGSHU_COLLECTIONS_FILE:-$TS_USERS_DIR/$TS_USER/collections.json}"
 
 hdr() {
 	printf 'Content-Type: application/json; charset=utf-8\r\n'

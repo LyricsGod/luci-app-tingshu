@@ -102,6 +102,9 @@ fun LibraryScreen(
     val query by vm.search.collectAsStateWithLifecycle()
     val sortMode by vm.sort.collectAsStateWithLifecycle()
     val themeMode by vm.theme.collectAsStateWithLifecycle()
+    val columns by vm.columns.collectAsStateWithLifecycle()
+    val authRole by vm.authRole.collectAsStateWithLifecycle()
+    val isAdmin = authRole == "admin"
 
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -158,7 +161,7 @@ fun LibraryScreen(
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 132.dp),
+        columns = GridCells.Fixed(columns.coerceIn(2, 5)),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 28.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -174,6 +177,7 @@ fun LibraryScreen(
                     if (!searchOpen) vm.setSearch("")
                 },
                 onUpload = { showUpload = true },
+                canUpload = isAdmin,
                 onSettings = onOpenSettings,
                 menuOpen = menuOpen,
                 onMenuOpenChange = { menuOpen = it },
@@ -265,7 +269,8 @@ fun LibraryScreen(
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     EmptyBlock(
                         onUpload = { showUpload = true },
-                        onRefresh = { vm.rescanLibrary() },
+                        canUpload = isAdmin,
+                        onRefresh = { if (isAdmin) vm.rescanLibrary() else vm.reload() },
                     )
                 }
             }
@@ -296,7 +301,11 @@ fun LibraryScreen(
                 book = book,
                 record = progress[book.id],
                 onClick = { onOpenBook(book) },
-                onEdit = { editingBook = book },
+                onEdit = if (isAdmin) {
+                    { editingBook = book }
+                } else {
+                    null
+                },
             )
         }
     }
@@ -335,6 +344,7 @@ private fun LibraryHeader(
     onRefresh: () -> Unit,
     onSearch: () -> Unit,
     onUpload: () -> Unit,
+    canUpload: Boolean,
     onSettings: () -> Unit,
     menuOpen: Boolean,
     onMenuOpenChange: (Boolean) -> Unit,
@@ -366,7 +376,7 @@ private fun LibraryHeader(
             Icon(Icons.Rounded.Search, "搜索", tint = colors.onSurfaceVariant)
         }
         IconButton(onClick = onUpload) {
-            Icon(Icons.Rounded.Upload, "上传", tint = colors.onSurfaceVariant)
+            if (canUpload) Icon(Icons.Rounded.Upload, "上传", tint = colors.onSurfaceVariant)
         }
         Box {
             IconButton(onClick = { onMenuOpenChange(true) }) {
@@ -540,7 +550,7 @@ private fun BookCard(
     book: Book,
     record: Progress?,
     onClick: () -> Unit,
-    onEdit: () -> Unit,
+    onEdit: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val finished = bookFinished(book, record)
@@ -564,7 +574,7 @@ private fun BookCard(
                 ) {
                     Text("已听完", style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
                 }
-            } else {
+            } else if (onEdit != null) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -652,7 +662,7 @@ private fun ErrorBlock(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun EmptyBlock(onUpload: () -> Unit, onRefresh: () -> Unit) {
+private fun EmptyBlock(onUpload: () -> Unit, canUpload: Boolean, onRefresh: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp),
@@ -680,7 +690,9 @@ private fun EmptyBlock(onUpload: () -> Unit, onRefresh: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onUpload) { Text("上传书籍") }
+            if (canUpload) {
+                Button(onClick = onUpload) { Text("上传书籍") }
+            }
             TextButton(onClick = onRefresh) { Text("重新扫描") }
         }
     }

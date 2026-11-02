@@ -22,6 +22,7 @@ import com.tingshu.app.data.Progress
 import com.tingshu.app.data.ProgressBackup
 import com.tingshu.app.data.SortMode
 import com.tingshu.app.data.ThemeMode
+import com.tingshu.app.data.TingshuApi
 import com.tingshu.app.data.UploadState
 import com.tingshu.app.data.Urls
 import com.tingshu.app.data.isUploadable
@@ -94,6 +95,19 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val sleep = MutableStateFlow(SleepState())
     val uploadState = MutableStateFlow<UploadState>(UploadState.Idle)
 
+    val needsLogin = MutableStateFlow(prefs.authToken.isBlank())
+    val authUser = MutableStateFlow(prefs.authUser)
+    val authRole = MutableStateFlow(prefs.authRole)
+    val authBusy = MutableStateFlow(false)
+    val authError = MutableStateFlow<String?>(null)
+    val authConfigured = MutableStateFlow(true)
+    val columns = MutableStateFlow(prefs.columns)
+    val users = MutableStateFlow<List<TingshuApi.UserInfo>>(emptyList())
+    val usersLoading = MutableStateFlow(false)
+    val usersError = MutableStateFlow<String?>(null)
+
+    val isAdmin: Boolean get() = authRole.value == "admin"
+
     val playerState: StateFlow<PlayerUiState> = player.state
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
@@ -115,7 +129,17 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { player.state.collect { onPlayerUpdate(it) } }
         viewModelScope.launch { player.transitions.collect { onTransition(it) } }
         player.setVolume(volume.value)
-        if (prefs.serverUrl.isNotBlank()) reload(initial = true)
+        if (prefs.authToken.isNotBlank() && prefs.serverUrl.isNotBlank()) {
+            viewModelScope.launch {
+                val base = prefs.serverUrl
+                val ok = runCatching { api.authStatus(base).authenticated }.getOrDefault(false)
+                if (!ok) {
+                    needsLogin.value = true
+                } else {
+                    reload(initial = true)
+                }
+            }
+        }
     }
 
     /* ---------------- 书库 ---------------- */
@@ -146,11 +170,15 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                 pullPauseMarks(base)
                 syncEnabled = true
             } catch (t: Throwable) {
-                val message = humanError(t)
-                if (books.value.isEmpty()) {
-                    loadState.value = LoadState.Error(message)
+                if (isAuthError(t)) {
+                    needsLogin.value = true
                 } else {
-                    messages.tryEmit(message)
+                    val message = humanError(t)
+                    if (books.value.isEmpty()) {
+                        loadState.value = LoadState.Error(message)
+                    } else {
+                        messages.tryEmit(message)
+                    }
                 }
             } finally {
                 refreshing.value = false
@@ -176,9 +204,196 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             }
             prefs.serverUrl = base
             serverUrl.value = base
-            reload(initial = true)
+            // 换服务器后必须用新服务器上的账号重新登录
+            prefs.authToken = ""
+            prefs.authUser = ""
+            prefs.authRole = ""
+            authUser.value = ""
+            authRole.value = ""
+            needsLogin.value = true
         }
     }
+
+    /**
+     * 服务器第一次使用时会自动创建管理员；否则走普通登录。
+     * 成功后保存 token，后续所有 CGI 请求都会带上 X-Auth-Token。
+     */
+    fun authenticate(address: String, user: String, password: String) {
+        val input = address.trim().ifBlank { prefs.serverUrl }
+        val base = Urls.normalizeServer(input)
+        if (base == null) {
+            authError.value = "地址格式不对，例如 192.168.1.1:8686"
+            return
+        }
+        if (user.isBlank()) {
+            authError.value = "请输入用户名"
+            return
+        }
+        if (password.length < 6) {
+            authError.value = "密码至少 6 位"
+            return
+        }
+        if (authBusy.value) return
+
+        viewModelScope.launch {
+            authBusy.value = true
+            authError.value = null
+            try {
+                val status = withContext(Dispatchers.IO) { api.authStatus(base) }
+                authConfigured.value = status.configured
+                if (!status.configured && user.length < 1) {
+                    authError.value = "请设置管理员用户名"
+                    return@launch
+                }
+                val action = if (status.configured) "login" else "setup"
+                val session = withContext(Dispatchers.IO) {
+                    api.auth(base, action, user, password)
+                }
+                val previous = prefs.authUser
+                if (previous.isBlank() || previous != session.user) clearUserData()
+
+                prefs.serverUrl = base
+                prefs.authToken = session.token
+                prefs.authUser = session.user
+                prefs.authRole = session.role
+                serverUrl.value = base
+                authUser.value = session.user
+                authRole.value = session.role
+                needsLogin.value = false
+                connectError.value = null
+
+                loadLayout(base)
+                reload(initial = true)
+                messages.tryEmit(if (action == "setup") "管理员已创建" else "已登录：${session.user}")
+            } catch (t: TingshuApi.ApiException) {
+                authError.value = when {
+                    t.code == 401 -> "用户名或密码不对"
+                    t.code == 403 -> "服务器已经初始化过了"
+                    else -> "登录失败（HTTP ${t.code}）"
+                }
+            } catch (t: Throwable) {
+                authError.value = "连不上服务器：${t.message ?: "请检查网络"}"
+            } finally {
+                authBusy.value = false
+            }
+        }
+    }
+
+    fun logout() {
+        val base = serverUrl.value
+        viewModelScope.launch {
+            if (base.isNotBlank()) {
+                withContext(Dispatchers.IO) { runCatching { api.logout(base) } }
+            }
+            prefs.authToken = ""
+            prefs.authUser = ""
+            prefs.authRole = ""
+            authUser.value = ""
+            authRole.value = ""
+            needsLogin.value = true
+            books.value = emptyList()
+            collections.value = emptyList()
+            progress.value = emptyMap()
+            pauseMarks.value = emptyList()
+            loadState.value = LoadState.Idle
+            player.stop()
+        }
+    }
+
+    fun setColumns(value: Int) {
+        val next = value.coerceIn(2, 5)
+        columns.value = next
+        prefs.columns = next
+        val base = serverUrl.value
+        if (base.isNotBlank()) {
+            viewModelScope.launch(Dispatchers.IO) { runCatching { api.pushLayoutColumns(base, next) } }
+        }
+    }
+
+    fun loadUsers() {
+        if (!isAdmin) return
+        val base = serverUrl.value
+        if (base.isBlank()) return
+        viewModelScope.launch {
+            usersLoading.value = true
+            usersError.value = null
+            try {
+                users.value = withContext(Dispatchers.IO) { api.listUsers(base) }
+            } catch (t: Throwable) {
+                usersError.value = if (isAuthError(t)) "登录已过期" else (t.message ?: "加载用户失败")
+                if (isAuthError(t)) needsLogin.value = true
+            } finally {
+                usersLoading.value = false
+            }
+        }
+    }
+
+    fun createUser(user: String, password: String, role: String) {
+        if (!isAdmin) return
+        val base = serverUrl.value
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.createUser(base, user, password, role) }
+                messages.tryEmit("用户已创建")
+                usersError.value = null
+                loadUsers()
+            } catch (t: Throwable) {
+                usersError.value = if (isAuthError(t)) "登录已过期" else (t.message ?: "创建失败")
+                if (isAuthError(t)) needsLogin.value = true
+            }
+        }
+    }
+
+    fun resetUserPassword(user: String, password: String) {
+        if (!isAdmin) return
+        val base = serverUrl.value
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.resetPassword(base, user, password) }
+                messages.tryEmit("密码已重置")
+                usersError.value = null
+            } catch (t: Throwable) {
+                usersError.value = if (isAuthError(t)) "登录已过期" else (t.message ?: "重置失败")
+                if (isAuthError(t)) needsLogin.value = true
+            }
+        }
+    }
+
+    fun deleteUser(user: String) {
+        if (!isAdmin) return
+        val base = serverUrl.value
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { api.deleteUser(base, user) }
+                messages.tryEmit("用户已删除")
+                usersError.value = null
+                loadUsers()
+            } catch (t: Throwable) {
+                usersError.value = if (isAuthError(t)) "登录已过期" else (t.message ?: "删除失败")
+                if (isAuthError(t)) needsLogin.value = true
+            }
+        }
+    }
+
+    private suspend fun loadLayout(base: String) {
+        val remote = runCatching { api.fetchLayoutColumns(base) }.getOrNull()
+        if (remote != null && remote > 0) {
+            columns.value = remote
+            prefs.columns = remote
+        }
+    }
+
+    private fun clearUserData() {
+        progressStore.clear()
+        collectionsStore.clear()
+        pauseMarkStore.clear()
+        progress.value = emptyMap()
+        collections.value = emptyList()
+        pauseMarks.value = emptyList()
+    }
+
+    private fun isAuthError(t: Throwable): Boolean =
+        t is TingshuApi.ApiException && t.code == 401
 
     fun scanLan() {
         if (scanning.value) return

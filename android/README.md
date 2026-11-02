@@ -1,9 +1,9 @@
 # 听书 · Android 客户端
 
 原生安卓客户端：Kotlin + Jetpack Compose（Material 3）+ Media3（ExoPlayer / MediaSession）。
-连的是 OpenWrt 上的 `luci-app-tingshu` 服务，**功能和网页版保持一致**：书架与合集（九宫格封面）、
-搜索排序、上传/删除书籍、编辑书名/简介/方形封面（可自由裁切）、进度备份恢复、暂停记录、
-倍速/定时/后台播放，进度、合集、暂停记录都和网页端双向同步。
+连的是 OpenWrt 上的 `luci-app-tingshu` 服务，**功能和网页版保持一致**：账号登录、书架与合集（九宫格封面）、
+搜索排序、每行显示列数、上传/删除书籍、编辑书名/简介/方形封面（可自由裁切）、进度备份恢复、暂停记录、
+倍速/定时/后台播放。同一账号的进度、合集、暂停记录、布局都和网页端双向同步；不同账号互相独立。
 
 ## 截图
 
@@ -11,13 +11,20 @@
 |:--:|:--:|:--:|:--:|
 | ![书架](docs/screenshots/library.png) | ![书籍](docs/screenshots/book.png) | ![播放器](docs/screenshots/player.png) | ![裁切](docs/screenshots/crop.png) |
 
+| 登录 / 建管理员 | 用户管理 | 首页列数 |
+|:--:|:--:|:--:|
+| ![登录](docs/screenshots/login.png) | ![用户](docs/screenshots/users.png) | ![布局](docs/screenshots/layout.png) |
+
 | 编辑书籍 | 暂停记录 | 上传书籍 | 设置 |
 |:--:|:--:|:--:|:--:|
 | ![编辑](docs/screenshots/edit.png) | ![暂停记录](docs/screenshots/marks.png) | ![上传](docs/screenshots/upload.png) | ![设置](docs/screenshots/settings.png) |
 
 ## 功能
 
+- **多用户**：首次使用创建管理员；管理员可创建普通用户/管理员、重置密码、删除用户；每个账号独立保存进度、合集、暂停记录和布局
+- **权限**：普通用户看不到上传、编辑、删除、重扫、用户管理入口；服务端也会拒绝这些请求
 - **书架**：合集卡片（3×3 九宫格封面）、继续收听、搜索书名/合集、三种排序（最近收听 / 书名 / 进度）
+- **布局**：设置里可选每行 2/3/4/5 列，按账号保存，平板/手机都适用
 - **合集**：新建、改名、增删书、调整顺序、删除；一本书只属于一个合集，已收进合集的书不在书架上重复出现
 - **书籍**：章节列表、已听完标记、简介、合集入口；封面统一 1:1 方形；编辑书名/简介/配色/封面，删除整本书
 - **封面裁切**：选图后可双指缩放、拖动位置，方框内画面输出 720×720 JPEG；网页端和 App 行为一致
@@ -74,24 +81,28 @@ app/src/main/java/com/tingshu/app/
    ├─ TingshuViewModel.kt    书库/进度/合集/暂停记录/上传/备份/播放
    ├─ theme/                 Material 3 配色、字体、系统栏
    ├─ components/            封面、合集宫格、迷你播放器、统计
-   ├─ dialogs/               编辑书籍、封面裁切、合集管理、上传、备份、暂停记录
-   └─ screens/               Library / Collection / Book / Player / Settings / Setup
+   ├─ dialogs/               编辑书籍、封面裁切、合集管理、上传、备份、暂停记录、用户管理
+   └─ screens/               Auth / Library / Collection / Book / Player / Settings
 ```
 
 ## 和服务端的约定
 
 | 用途 | 接口 | 说明 |
 |---|---|---|
-| 书库 | `GET library.json` | 服务端扫描生成的索引 |
-| 音频 | `GET media/<路径>` | 路径按 `encodeURIComponent` 逐段编码 |
-| 进度 | `GET/POST cgi-ts/progress` | POST 表单 `b/i/t/d/u` |
-| 书名/简介/封面 | `GET/POST cgi-ts/meta` | 键是书 id 的十六进制；封面 base64 |
-| 合集 | `GET/POST cgi-ts/collections` | POST `c=<urlencoded JSON 数组>` |
-| 暂停记录 | `GET/POST cgi-ts/pausemarks` | POST 整个 JSON 数组 |
-| 上传/删除/重扫 | `POST cgi-ts/manage?action=...` | upload 流式 POST 文件；archive 交服务端解压；delete/rescan |
+| 登录/初始化 | `GET/POST cgi-ts/auth` | status / login / setup；返回 token，同时写 HttpOnly cookie |
+| 用户管理 | `GET/POST cgi-ts/users` | 仅管理员；create / reset / delete |
+| 书库 | `GET library.json` | 服务端扫描生成的索引（共用） |
+| 音频 | `GET media/<路径>` | 路径按 `encodeURIComponent` 逐段编码（共用） |
+| 进度 | `GET/POST cgi-ts/progress` | POST 表单 `b/i/t/d/u`；按登录用户隔离 |
+| 书名/简介/封面 | `GET/POST cgi-ts/meta` | 键是书 id 的十六进制；封面 base64；POST 仅管理员 |
+| 合集 | `GET/POST cgi-ts/collections` | POST `c=<urlencoded JSON 数组>`；按用户隔离 |
+| 暂停记录 | `GET/POST cgi-ts/pausemarks` | POST 整个 JSON 数组；按用户隔离 |
+| 页面布局 | `GET/POST cgi-ts/layout` | JSON `{"columns":2-5}`；按用户隔离 |
+| 上传/删除/重扫 | `POST cgi-ts/manage?action=...` | 仅管理员；upload 流式 POST 文件；archive 交服务端解压；delete/rescan |
 
 必须和网页端严格对齐的点：
 
+- **登录**：App 保存登录返回的 token，同时放进 `Cookie: tingshu_session=...` 和 `Authorization: Bearer ...` 发送（uhttpd 对这两种支持最稳）；网页用 HttpOnly cookie。
 - **书 id**：`net:<文件夹名>`（散装音频 `net:__root__`），进度/元数据的键是它的 UTF-8 十六进制。
 - **进度合并**：两边都有记录时按 `updatedAt` 取新的；两边都是空记录就跳过。
 - **done**：只有自动播完（`MEDIA_ITEM_TRANSITION_REASON_AUTO`）或整本播完才记该章已完成。
@@ -106,7 +117,7 @@ app/src/main/java/com/tingshu/app/
 - 只支持局域网 HTTP（`usesCleartextTraffic=true`）；外网访问请走 VPN 或反向代理。
 - Android 13+ 需要授予通知权限才会显示播放通知；部分国产 ROM 还要手动允许后台运行/自启动。
 - 播放列表里的封面只用 `artworkUri`，不把 base64 塞进每条 MediaItem，避免 Binder 事务超限。
-- 当前版本号 1.2.1，APK 用 debug 签名。
+- 当前版本号 1.3.0，APK 用 debug 签名。
 
 ## 测试
 

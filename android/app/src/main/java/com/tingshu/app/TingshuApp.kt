@@ -28,7 +28,7 @@ class AppContainer(context: Context) {
     val progressStore = ProgressStore(context)
     val collectionsStore = CollectionsStore(context)
     val covers = CoverStore(context)
-    val api = TingshuApi()
+    val api = TingshuApi { prefs.authToken }
     val repository = LibraryRepository(api, covers)
     val scanner = LanScanner()
     val player = PlaybackController(context)

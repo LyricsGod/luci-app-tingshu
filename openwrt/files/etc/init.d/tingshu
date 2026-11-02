@@ -29,12 +29,13 @@ prepare_www() {
 	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步 + 暂停记录同步
 	mkdir -p "$WWW_DIR/cgi-ts"
 	chmod 755 "$WWW_DIR/cgi-ts"
-	for api in progress manage collections meta pausemarks; do
+	for api in progress manage collections meta pausemarks auth users layout; do
 		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 	done
-	# 进度数据放 overlay，重启不丢
-	mkdir -p /etc/tingshu/progress
+	# 进度数据放 overlay，重启不丢；多用户目录也在这里
+	mkdir -p /etc/tingshu/progress /etc/tingshu/users
+	chmod 700 /etc/tingshu/users 2>/dev/null
 	# 告诉扫描脚本往哪个目录写索引
 	TINGSHU_WWW_DIR="$WWW_DIR" /usr/lib/tingshu/scan.sh >/dev/null 2>&1
 	# 扫描脚本可能也用 600 写 library.json，统一修正权限

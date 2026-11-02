@@ -1,0 +1,115 @@
+#!/bin/sh
+#
+# 听书 · 用户管理（仅管理员）
+#
+#   GET  /cgi-ts/users                 → {ok, users:[{user,role,created}]}
+#   POST /cgi-ts/users?action=create   u=&p=&role=user|admin
+#   POST /cgi-ts/users?action=reset    u=&p=
+#   POST /cgi-ts/users?action=delete   u=
+#
+. /usr/lib/tingshu/auth.sh
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+fail() {
+	_code="$1"
+	_msg="$2"
+	case "$_code" in
+		400) printf 'Status: 400 Bad Request\r\n' ;;
+		403) printf 'Status: 403 Forbidden\r\n' ;;
+		404) printf 'Status: 404 Not Found\r\n' ;;
+	esac
+	hdr
+	printf '{"ok":false,"error":"%s"}\n' "$_msg"
+	exit 0
+}
+
+ts_require_admin
+
+method="${REQUEST_METHOD:-GET}"
+action="$(ts_param "${QUERY_STRING:-}" action)"
+
+if [ "$method" = "GET" ]; then
+	hdr
+	printf '{"ok":true,"users":['
+	_first=1
+	for _f in "$TS_USERS_DIR"/*/account; do
+		[ -f "$_f" ] || continue
+		_u="${_f%/account}"
+		_u="${_u##*/}"
+		_role="$(ts_user_role "$_u")"
+		_created="$(sed -n 's/^created=//p' "$_f" | head -n 1)"
+		if [ "$_first" -eq 1 ]; then _first=0; else printf ','; fi
+		printf '{"user":"%s","role":"%s","created":%s}' "$_u" "$_role" "${_created:-0}"
+	done
+	printf ']}\n'
+	exit 0
+fi
+
+[ "$method" = "POST" ] || fail 400 "post required"
+body=""
+len="${CONTENT_LENGTH:-0}"
+case "$len" in ''|*[!0-9]*) len=0 ;; esac
+[ "$len" -le 16384 ] || fail 400 "too large"
+[ "$len" -gt 0 ] && body="$(head -c "$len")"
+
+# 串行化，防止两个管理员同时建同名用户
+exec 9>/tmp/tingshu-users.lock
+flock 9 2>/dev/null
+
+case "$action" in
+create)
+	_u="$(ts_urldecode "$(ts_param "$body" u)")"
+	_p="$(ts_urldecode "$(ts_param "$body" p)")"
+	_role="$(ts_urldecode "$(ts_param "$body" role)")"
+	[ -n "$_role" ] || _role=user
+	ts_create_user "$_u" "$_p" "$_role"
+	case $? in
+		0) ;;
+		2) fail 400 "用户名只能包含字母、数字、下划线和横线（1-32 位）" ;;
+		3) fail 400 "用户名已存在" ;;
+		4) fail 400 "密码至少 6 位" ;;
+		*) fail 500 "创建失败" ;;
+	esac
+	hdr
+	printf '{"ok":true}\n'
+	;;
+
+reset)
+	_u="$(ts_urldecode "$(ts_param "$body" u)")"
+	_p="$(ts_urldecode "$(ts_param "$body" p)")"
+	ts_user_exists "$_u" || fail 404 "用户不存在"
+	ts_set_password "$_u" "$_p"
+	case $? in
+		0) ;;
+		4) fail 400 "密码至少 6 位" ;;
+		*) fail 500 "保存失败" ;;
+	esac
+	ts_delete_sessions_for "$_u"
+	hdr
+	printf '{"ok":true}\n'
+	;;
+
+delete)
+	_u="$(ts_urldecode "$(ts_param "$body" u)")"
+	ts_user_exists "$_u" || fail 404 "用户不存在"
+	[ "$_u" = "$TS_USER" ] && fail 400 "不能删除当前登录的账号"
+	_role="$(ts_user_role "$_u")"
+	if [ "$_role" = "admin" ] && [ "$(ts_count_admins)" -le 1 ]; then
+		fail 400 "至少保留一个管理员"
+	fi
+	ts_delete_user_data "$_u"
+	hdr
+	printf '{"ok":true}\n'
+	;;
+
+*)
+	fail 400 "unknown action"
+	;;
+esac
+exit 0

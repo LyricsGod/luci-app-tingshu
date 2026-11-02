@@ -1,0 +1,128 @@
+#!/bin/sh
+#
+# 听书 · 登录 / 初始化管理员 / 退出
+#
+#   GET  /cgi-ts/auth?action=status    → {configured, authenticated, user, role}
+#   POST /cgi-ts/auth?action=setup     u=&p=     仅在没有用户时可用，创建管理员
+#   POST /cgi-ts/auth?action=login     u=&p=
+#   POST /cgi-ts/auth?action=logout
+#   POST /cgi-ts/auth?action=password  old=&p=   修改自己的密码
+#
+. /usr/lib/tingshu/auth.sh
+
+hdr() {
+	printf 'Content-Type: application/json; charset=utf-8\r\n'
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf '\r\n'
+}
+
+fail() {
+	_code="$1"
+	_msg="$2"
+	case "$_code" in
+		400) printf 'Status: 400 Bad Request\r\n' ;;
+		401) printf 'Status: 401 Unauthorized\r\n' ;;
+		403) printf 'Status: 403 Forbidden\r\n' ;;
+	esac
+	hdr
+	printf '{"ok":false,"error":"%s"}\n' "$_msg"
+	exit 0
+}
+
+body=""
+method="${REQUEST_METHOD:-GET}"
+if [ "$method" = "POST" ]; then
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) len=0 ;; esac
+	[ "$len" -le 16384 ] || fail 400 "too large"
+	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+fi
+
+action="$(ts_param "${QUERY_STRING:-}" action)"
+[ -n "$action" ] || action=status
+
+case "$action" in
+status)
+	_configured=0
+	[ "$(ts_user_count)" -gt 0 ] && _configured=1
+	_authed=0
+	_user=""
+	_role=""
+	if ts_load_session; then
+		_authed=1
+		_user="$TS_USER"
+		_role="$TS_ROLE"
+	fi
+	hdr
+	printf '{"ok":true,"configured":%s,"authenticated":%s,"user":"%s","role":"%s"}\n' \
+		"$_configured" "$_authed" "$_user" "$_role"
+	;;
+
+setup)
+	[ "$method" = "POST" ] || fail 400 "post required"
+	[ "$(ts_user_count)" -eq 0 ] || fail 403 "already configured"
+	_u="$(ts_urldecode "$(ts_param "$body" u)")"
+	_p="$(ts_urldecode "$(ts_param "$body" p)")"
+	ts_safe_name "$_u" || fail 400 "用户名只能包含字母、数字、下划线和横线（1-32 位）"
+	ts_create_user "$_u" "$_p" admin
+	case $? in
+		0) ;;
+		3) fail 400 "用户名已存在" ;;
+		4) fail 400 "密码至少 6 位" ;;
+		*) fail 500 "创建失败，请检查磁盘空间" ;;
+	esac
+	ts_migrate_legacy "$_u"
+	_token="$(ts_create_session "$_u" admin)" || fail 500 "创建会话失败"
+	ts_set_cookie "$_token"
+	hdr
+	printf '{"ok":true,"user":"%s","role":"admin","token":"%s"}\n' "$_u" "$_token"
+	;;
+
+login)
+	[ "$method" = "POST" ] || fail 400 "post required"
+	_u="$(ts_urldecode "$(ts_param "$body" u)")"
+	_p="$(ts_urldecode "$(ts_param "$body" p)")"
+	if ! ts_check_password "$_u" "$_p"; then
+		sleep 1
+		fail 401 "用户名或密码不对"
+	fi
+	_role="$(ts_user_role "$_u")"
+	_token="$(ts_create_session "$_u" "$_role")" || fail 500 "创建会话失败"
+	ts_set_cookie "$_token"
+	hdr
+	printf '{"ok":true,"user":"%s","role":"%s","token":"%s"}\n' "$_u" "$_role" "$_token"
+	;;
+
+logout)
+	_token="$(ts_token_from_request)"
+	case "$_token" in
+		''|*[!0-9a-fA-F]*) ;;
+		*) [ ${#_token} -eq 64 ] && rm -f "$TS_SESSION_DIR/$_token" ;;
+	esac
+	ts_clear_cookie
+	hdr
+	printf '{"ok":true}\n'
+	;;
+
+password)
+	[ "$method" = "POST" ] || fail 400 "post required"
+	ts_require_auth
+	_old="$(ts_urldecode "$(ts_param "$body" old)")"
+	_new="$(ts_urldecode "$(ts_param "$body" p)")"
+	ts_check_password "$TS_USER" "$_old" || fail 400 "原密码不对"
+	ts_set_password "$TS_USER" "$_new"
+	case $? in
+		0) ;;
+		4) fail 400 "新密码至少 6 位" ;;
+		*) fail 500 "保存失败" ;;
+	esac
+	hdr
+	printf '{"ok":true}\n'
+	;;
+
+*)
+	fail 400 "unknown action"
+	;;
+esac
+exit 0

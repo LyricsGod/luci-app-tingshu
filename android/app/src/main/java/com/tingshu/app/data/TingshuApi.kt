@@ -8,6 +8,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.Locale
 
 /**
@@ -21,11 +22,119 @@ import java.util.Locale
  *  - GET  cgi-ts/collections               合集
  *  - POST cgi-ts/manage?action=rescan      重扫书库
  */
-class TingshuApi {
+class TingshuApi(private val tokenProvider: () -> String? = { null }) {
+
+    class ApiException(val code: Int, message: String) : IOException(message)
 
     data class RawLibrary(val root: String, val error: String?, val books: List<RawBook>)
     data class RawBook(val id: String, val title: String, val cover: String?, val tracks: List<RawTrack>)
     data class RawTrack(val title: String, val path: String)
+
+    data class AuthStatus(
+        val configured: Boolean,
+        val authenticated: Boolean,
+        val user: String,
+        val role: String,
+    )
+
+    data class AuthSession(val token: String, val user: String, val role: String)
+    data class UserInfo(val user: String, val role: String)
+
+    suspend fun authStatus(base: String): AuthStatus = withContext(Dispatchers.IO) {
+        val text = request("${base}cgi-ts/auth?action=status&t=${System.currentTimeMillis()}", timeoutMs = 6000)
+        val o = JSONObject(text)
+        AuthStatus(
+            configured = o.optBoolean("configured"),
+            authenticated = o.optBoolean("authenticated"),
+            user = o.optString("user"),
+            role = o.optString("role"),
+        )
+    }
+
+    suspend fun auth(base: String, action: String, user: String, password: String): AuthSession =
+        withContext(Dispatchers.IO) {
+            val text = request(
+                url = "${base}cgi-ts/auth?action=$action",
+                method = "POST",
+                body = formBody("u" to user, "p" to password).toByteArray(),
+                contentType = "application/x-www-form-urlencoded",
+                timeoutMs = 12000,
+            )
+            val o = JSONObject(text)
+            if (!o.optBoolean("ok")) throw IOException(o.optString("error", "登录失败"))
+            AuthSession(o.optString("token"), o.optString("user"), o.optString("role"))
+        }
+
+    suspend fun logout(base: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            request("${base}cgi-ts/auth?action=logout", method = "POST", body = ByteArray(0),
+                contentType = "application/x-www-form-urlencoded", timeoutMs = 6000)
+            true
+        }.getOrDefault(false)
+    }
+
+    suspend fun fetchLayoutColumns(base: String): Int? = withContext(Dispatchers.IO) {
+        runCatching {
+            val text = request("${base}cgi-ts/layout?t=${System.currentTimeMillis()}", timeoutMs = 6000)
+            val o = JSONObject(text)
+            if (o.optBoolean("ok")) o.optJSONObject("layout")?.optInt("columns", 0) else null
+        }.getOrNull()
+    }
+
+    suspend fun pushLayoutColumns(base: String, columns: Int): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = JSONObject().put("columns", columns).toString().toByteArray()
+            request(
+                url = "${base}cgi-ts/layout",
+                method = "POST",
+                body = body,
+                contentType = "application/json",
+                timeoutMs = 8000,
+            )
+            true
+        }.getOrDefault(false)
+    }
+
+    suspend fun listUsers(base: String): List<UserInfo> = withContext(Dispatchers.IO) {
+        val text = request("${base}cgi-ts/users?t=${System.currentTimeMillis()}", timeoutMs = 8000)
+        val o = JSONObject(text)
+        if (!o.optBoolean("ok")) throw IOException(o.optString("error", "加载用户失败"))
+        val arr = o.optJSONArray("users") ?: JSONArray()
+        val out = ArrayList<UserInfo>(arr.length())
+        for (i in 0 until arr.length()) {
+            val u = arr.optJSONObject(i) ?: continue
+            val name = u.optString("user")
+            if (name.isBlank()) continue
+            out.add(UserInfo(name, u.optString("role", "user")))
+        }
+        out
+    }
+
+    suspend fun createUser(base: String, user: String, password: String, role: String): Boolean =
+        userAction(base, "create", "u" to user, "p" to password, "role" to role)
+
+    suspend fun resetPassword(base: String, user: String, password: String): Boolean =
+        userAction(base, "reset", "u" to user, "p" to password)
+
+    suspend fun deleteUser(base: String, user: String): Boolean =
+        userAction(base, "delete", "u" to user)
+
+    private suspend fun userAction(base: String, action: String, vararg fields: Pair<String, String>): Boolean =
+        withContext(Dispatchers.IO) {
+            val text = request(
+                url = "${base}cgi-ts/users?action=$action",
+                method = "POST",
+                body = formBody(*fields).toByteArray(),
+                contentType = "application/x-www-form-urlencoded",
+                timeoutMs = 10000,
+            )
+            JSONObject(text).optBoolean("ok")
+        }
+
+    private fun formBody(vararg fields: Pair<String, String>): String =
+        fields.joinToString("&") { (k, v) ->
+            URLEncoder.encode(k, "UTF-8") + "=" + URLEncoder.encode(v, "UTF-8")
+        }
 
     suspend fun probe(base: String): Boolean = withContext(Dispatchers.IO) {
         val text = request("${base}library.json?t=${System.currentTimeMillis()}", timeoutMs = 5000)
@@ -313,6 +422,10 @@ class TingshuApi {
             conn.useCaches = false
             conn.setRequestProperty("Accept", "application/json, */*")
             conn.setRequestProperty("Cache-Control", "no-cache")
+            tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                conn.setRequestProperty("Cookie", "tingshu_session=$it")
+                conn.setRequestProperty("Authorization", "Bearer $it")
+            }
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", contentType ?: "application/octet-stream")
@@ -327,7 +440,7 @@ class TingshuApi {
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
             if (code !in 200..299) {
-                throw IOException("HTTP $code ${text.take(120)}".trim())
+                throw ApiException(code, "HTTP $code ${text.take(120)}".trim())
             }
             return text
         } finally {
@@ -351,6 +464,10 @@ class TingshuApi {
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", contentType)
             conn.setFixedLengthStreamingMode(file.length())
+            tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                conn.setRequestProperty("Cookie", "tingshu_session=$it")
+                conn.setRequestProperty("Authorization", "Bearer $it")
+            }
             file.inputStream().use { input ->
                 conn.outputStream.use { output ->
                     input.copyTo(output, 64 * 1024)
@@ -361,7 +478,7 @@ class TingshuApi {
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
             if (code !in 200..299) {
-                throw IOException("HTTP $code ${text.take(120)}".trim())
+                throw ApiException(code, "HTTP $code ${text.take(120)}".trim())
             }
             return text
         } finally {

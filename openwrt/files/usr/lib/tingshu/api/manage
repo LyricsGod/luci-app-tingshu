@@ -9,6 +9,9 @@
 #
 # 只允许音频/图片/文本类文件；路径一律拒绝 .. 和绝对路径。
 
+. /usr/lib/tingshu/auth.sh
+ts_require_admin
+
 BOOKS_DIR="${TINGSHU_BOOKS_DIR:-}"
 WWW_DIR="${TINGSHU_WWW_DIR:-/tmp/tingshu/www}"
 

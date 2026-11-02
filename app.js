@@ -165,6 +165,33 @@
     colEditCancel: $('#colEditCancel'),
     colEditClose: $('#colEditClose'),
     colDelete: $('#colDelete'),
+    // 用户
+    userBtn: $('#userBtn'),
+    userLabel: $('#userLabel'),
+    layoutBtn: $('#layoutBtn'),
+    authSheet: $('#authSheet'),
+    authTitle: $('#authTitle'),
+    authHint: $('#authHint'),
+    authForm: $('#authForm'),
+    authUser: $('#authUser'),
+    authPass: $('#authPass'),
+    authError: $('#authError'),
+    authSubmit: $('#authSubmit'),
+    authFoot: $('#authFoot'),
+    accountSheet: $('#accountSheet'),
+    accountInfo: $('#accountInfo'),
+    accountClose: $('#accountClose'),
+    accountUsersBtn: $('#accountUsersBtn'),
+    accountPasswordBtn: $('#accountPasswordBtn'),
+    accountLogoutBtn: $('#accountLogoutBtn'),
+    usersSheet: $('#usersSheet'),
+    usersClose: $('#usersClose'),
+    userList: $('#userList'),
+    newUserForm: $('#newUserForm'),
+    newUserName: $('#newUserName'),
+    newUserPass: $('#newUserPass'),
+    newUserRole: $('#newUserRole'),
+    usersMsg: $('#usersMsg'),
   };
 
   /* ================= 状态 ================= */
@@ -177,6 +204,12 @@
     progress: new Map(),
     durations: new Map(),
     settings: { rate: 1, volume: 1, theme: 'auto', sort: 'recent', sleepFinish: false },
+    user: null,
+    role: '',
+    columns: 0,
+    configured: true,
+    authShown: false,
+    users: [],
     sleep: { mode: 'off', endsAt: 0, minutes: 0, pending: false },
     filter: '',
     source: 'local',      // local = 本机文件夹，net = 路由器/服务器书库
@@ -263,6 +296,92 @@
     });
   }
 
+  async function dbClear(store) {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+      const r = db.transaction(store, 'readwrite').objectStore(store).clear();
+      r.onsuccess = () => res();
+      r.onerror = () => rej(r.error);
+    });
+  }
+
+  /* ================= 用户 / 权限 ================= */
+
+  const AUTH_API = 'cgi-ts/auth';
+  const USERS_API = 'cgi-ts/users';
+  const LAYOUT_API = 'cgi-ts/layout';
+  const nativeFetch = window.fetch.bind(window);
+
+  // 所有 CGI 都带上 cookie，401 时弹登录；音频/封面等静态资源不走这里
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf('cgi-ts/') < 0) return nativeFetch(input, init);
+    return nativeFetch(input, { credentials: 'same-origin', ...init }).then(res => {
+      if (res.status === 401) onAuthLost();
+      return res;
+    });
+  };
+
+  function isAdmin() {
+    return state.role === 'admin';
+  }
+
+  function clampColumns(n) {
+    n = Math.round(Number(n) || 0);
+    if (n <= 0) return 0;
+    return Math.max(2, Math.min(5, n));
+  }
+
+  function applyLayout() {
+    if (!el.bookGrid) return;
+    state.columns = clampColumns(state.columns);
+    if (state.columns > 0) {
+      el.bookGrid.style.gridTemplateColumns = `repeat(${state.columns}, minmax(0, 1fr))`;
+    } else {
+      el.bookGrid.style.gridTemplateColumns = '';
+    }
+    if (el.layoutBtn) {
+      el.layoutBtn.textContent = state.columns > 0 ? `每行 ${state.columns} 本` : '每行自动';
+    }
+  }
+
+  async function loadUserLayout() {
+    try {
+      const res = await fetch(LAYOUT_API + '?t=' + Date.now(), { cache: 'no-store' });
+      const data = await res.json();
+      if (data && data.ok && data.layout) state.columns = clampColumns(data.layout.columns);
+    } catch { /* 用自动列数 */ }
+    applyLayout();
+  }
+
+  async function saveUserLayout() {
+    applyLayout();
+    try {
+      await fetch(LAYOUT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ columns: state.columns }),
+      });
+    } catch { /* 下次再试 */ }
+  }
+
+  function onAuthLost() {
+    if (state.authShown) return;
+    state.user = null;
+    state.role = '';
+    showAuth('login', '登录已过期，请重新登录');
+  }
+
+  async function clearUserCaches() {
+    try { await dbClear('progress'); } catch { /* ignore */ }
+    try { await dbClear('collections'); } catch { /* ignore */ }
+    try { await dbClear('pausemarks'); } catch { /* ignore */ }
+    state.progress.clear();
+    state.collections = [];
+    syncEnabled = false;
+    colSyncEnabled = false;
+  }
+
   /* ================= 小工具 ================= */
 
   const extOf = (name) => (name.split('.').pop() || '').toLowerCase();
@@ -313,7 +432,7 @@
   function showVersionInfo() {
     const boot = window.__BOOT_STAMP__;
     const build = window.__BUILD_VER__;
-    const appVersion = '1.3.0';
+    const appVersion = '1.4.0';
     let info = '听书 v' + appVersion;
     if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
     if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
@@ -332,7 +451,8 @@
     const locked = !el.editSheet.hidden || !el.collectionSheet.hidden
       || !el.colEditSheet.hidden || !el.sheet.hidden || !el.uploadSheet.hidden
       || !el.backupSheet.hidden || !el.pausemarksSheet.hidden
-      || !el.cropSheet.hidden;
+      || !el.cropSheet.hidden || !el.authSheet.hidden
+      || !el.accountSheet.hidden || !el.usersSheet.hidden;
     document.body.style.overflow = locked ? 'hidden' : '';
   }
 
@@ -768,7 +888,9 @@
       fill.style.width = (st.frac * 100).toFixed(1) + '%';
       bar.appendChild(fill);
 
-      card.append(cover, editBtn, title, meta, bar);
+      card.append(cover);
+      if (isAdmin()) card.append(editBtn);
+      card.append(title, meta, bar);
       frag.appendChild(card);
     }
     el.bookGrid.appendChild(frag);
@@ -977,6 +1099,7 @@
   const editState = { book: null, palette: null, coverBlob: null, tempUrl: null, title: '', desc: '' };
 
   function openEditor(book) {
+    if (!isAdmin()) return;
     editState.book = book;
     editState.palette = book.palette != null ? book.palette : null;
     editState.coverBlob = book.userCover || null;
@@ -2095,6 +2218,10 @@
   }
 
   function openUploadSheet() {
+    if (!isAdmin()) {
+      toast('只有管理员可以上传书籍');
+      return;
+    }
     if (state.source !== 'net') {
       // 没有连上路由器（比如直接双击 index.html），退回本机文件夹
       toast('没连上书库服务，改为选择本机文件夹', 2600);
@@ -2126,6 +2253,7 @@
   }
 
   async function rescanServer() {
+    if (!isAdmin()) { toast('只有管理员可以重新扫描书库'); return; }
     try {
       const res = await fetch(MANAGE_API + '?action=rescan', { method: 'POST' });
       return await res.json();
@@ -2415,6 +2543,10 @@
 
   /* 删掉书架上的书：连本地进度、合集引用一起清理 */
   async function deleteBook(book) {
+    if (!isAdmin()) {
+      toast('只有管理员可以删除书籍');
+      return;
+    }
     const folder = String(book.id).indexOf('net:') === 0 ? book.id.slice(4) : book.folderTitle;
     const ask = '删除「' + book.title + '」？\n\n' +
       '会把路由器上「' + folder + '」这个文件夹整个删掉，里面的音频也一起没了，不能恢复。';
@@ -3428,7 +3560,258 @@
 
   /* ================= 事件 ================= */
 
+  async function fetchAuthStatus() {
+    try {
+      const res = await nativeFetch(AUTH_API + '?action=status&t=' + Date.now(), {
+        cache: 'no-store', credentials: 'same-origin',
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  function showAuth(mode, message) {
+    state.authShown = true;
+    el.authSheet.hidden = false;
+    const setup = mode === 'setup';
+    el.authTitle.textContent = setup ? '创建管理员' : '登录听书';
+    el.authHint.textContent = setup ? '第一次使用，先创建一个管理员账号。' : '用管理员或普通用户账号登录。';
+    el.authSubmit.textContent = setup ? '创建并进入' : '登录';
+    el.authFoot.textContent = setup
+      ? '管理员可以创建用户、上传/编辑/删除书籍；普通用户只能听书。'
+      : '没有账号？请让管理员在「用户管理」里创建。';
+    el.authForm.dataset.mode = setup ? 'setup' : 'login';
+    el.authPass.autocomplete = setup ? 'new-password' : 'current-password';
+    el.authError.hidden = !message;
+    el.authError.textContent = message || '';
+    syncBodyScroll();
+    setTimeout(() => { try { el.authUser.focus({ preventScroll: true }); } catch { /* ignore */ } }, 100);
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    const mode = el.authForm.dataset.mode || 'login';
+    const u = el.authUser.value.trim();
+    const p = el.authPass.value;
+    if (!u || !p) {
+      el.authError.hidden = false;
+      el.authError.textContent = '请输入用户名和密码';
+      return;
+    }
+    el.authSubmit.disabled = true;
+    try {
+      const res = await nativeFetch(AUTH_API + '?action=' + mode, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ u, p }).toString(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        location.reload();
+        return;
+      }
+      if (mode === 'setup' && res.status === 403) {
+        showAuth('login', '服务器已经初始化过了，请直接登录');
+        return;
+      }
+      el.authError.hidden = false;
+      el.authError.textContent = data.error || '登录失败，请重试';
+    } catch {
+      el.authError.hidden = false;
+      el.authError.textContent = '连不上服务器，检查网络后重试';
+    } finally {
+      el.authSubmit.disabled = false;
+    }
+  }
+
+  function applyPermissions() {
+    const admin = isAdmin();
+    if (el.pickBtn) el.pickBtn.hidden = !admin;
+    if (el.emptyPickBtn && !admin) el.emptyPickBtn.hidden = true;
+    if (el.editBookBtn) el.editBookBtn.hidden = !admin;
+    if (el.bookDeleteBtn) el.bookDeleteBtn.hidden = !admin;
+    if (el.accountUsersBtn) el.accountUsersBtn.hidden = !admin;
+    if (el.userLabel) el.userLabel.textContent = state.user || '登录';
+    document.body.classList.toggle('is-admin', admin);
+    document.body.classList.toggle('is-user', !admin);
+  }
+
+  function openAccount() {
+    if (!state.user) { showAuth('login'); return; }
+    el.accountInfo.textContent =
+      `当前账号：${state.user}\n角色：${isAdmin() ? '管理员' : '普通用户'}`;
+    el.accountUsersBtn.hidden = !isAdmin();
+    el.accountSheet.hidden = false;
+    syncBodyScroll();
+  }
+
+  async function openUsers() {
+    if (!isAdmin()) return;
+    el.accountSheet.hidden = true;
+    el.usersSheet.hidden = false;
+    syncBodyScroll();
+    await loadUsers();
+  }
+
+  async function loadUsers() {
+    el.userList.innerHTML = '<p class="muted tiny">加载中…</p>';
+    try {
+      const res = await fetch(USERS_API + '?t=' + Date.now(), { cache: 'no-store' });
+      const data = await res.json();
+      if (!data.ok) { el.userList.innerHTML = '<p class="muted tiny">加载失败</p>'; return; }
+      state.users = data.users || [];
+      renderUsers();
+    } catch {
+      el.userList.innerHTML = '<p class="muted tiny">连不上服务器</p>';
+    }
+  }
+
+  function renderUsers() {
+    el.userList.innerHTML = '';
+    if (!state.users.length) {
+      const p = document.createElement('p');
+      p.className = 'muted tiny';
+      p.textContent = '还没有用户';
+      el.userList.appendChild(p);
+      return;
+    }
+    for (const u of state.users) {
+      const row = document.createElement('div');
+      row.className = 'user-row';
+
+      const name = document.createElement('span');
+      name.className = 'u-name';
+      name.textContent = u.user;
+      const role = document.createElement('span');
+      role.className = 'u-role' + (u.role === 'admin' ? ' admin' : '');
+      role.textContent = u.role === 'admin' ? '管理员' : '普通用户';
+      const spacer = document.createElement('span');
+      spacer.className = 'u-spacer';
+
+      const reset = document.createElement('button');
+      reset.className = 'btn ghost';
+      reset.type = 'button';
+      reset.textContent = '重置密码';
+      reset.addEventListener('click', () => resetPassword(u.user));
+
+      const del = document.createElement('button');
+      del.className = 'btn ghost danger';
+      del.type = 'button';
+      del.textContent = '删除';
+      del.disabled = u.user === state.user;
+      del.title = u.user === state.user ? '不能删除当前账号' : '';
+      del.addEventListener('click', () => deleteUser(u.user));
+
+      row.append(name, role, spacer, reset, del);
+      el.userList.appendChild(row);
+    }
+  }
+
+  async function resetPassword(user) {
+    const p = window.prompt(`给「${user}」设置新密码（至少 6 位）`);
+    if (!p) return;
+    try {
+      const res = await fetch(USERS_API + '?action=reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ u: user, p }).toString(),
+      });
+      const data = await res.json();
+      toast(data.ok ? '密码已重置' : (data.error || '重置失败'), 1800);
+    } catch { toast('重置失败'); }
+  }
+
+  async function deleteUser(user) {
+    if (!window.confirm(`确定删除用户「${user}」？他的听书记录和布局也会一起删除。`)) return;
+    try {
+      const res = await fetch(USERS_API + '?action=delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ u: user }).toString(),
+      });
+      const data = await res.json();
+      if (data.ok) { toast('已删除'); await loadUsers(); }
+      else toast(data.error || '删除失败', 2200);
+    } catch { toast('删除失败'); }
+  }
+
+  async function createUser(event) {
+    event.preventDefault();
+    const u = el.newUserName.value.trim();
+    const p = el.newUserPass.value;
+    const role = el.newUserRole.value;
+    if (!u || !p) { el.usersMsg.textContent = '用户名和密码都要填'; return; }
+    try {
+      const res = await fetch(USERS_API + '?action=create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ u, p, role }).toString(),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        el.newUserName.value = '';
+        el.newUserPass.value = '';
+        el.usersMsg.textContent = '创建成功';
+        await loadUsers();
+      } else {
+        el.usersMsg.textContent = data.error || '创建失败';
+      }
+    } catch { el.usersMsg.textContent = '创建失败'; }
+  }
+
+  async function changePassword() {
+    const old = window.prompt('当前密码');
+    if (!old) return;
+    const p = window.prompt('新密码（至少 6 位）');
+    if (!p) return;
+    try {
+      const res = await fetch(AUTH_API + '?action=password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ old, p }).toString(),
+      });
+      const data = await res.json();
+      toast(data.ok ? '密码已修改' : (data.error || '修改失败'), 2000);
+    } catch { toast('修改失败'); }
+  }
+
+  async function logout() {
+    try {
+      await nativeFetch(AUTH_API + '?action=logout', {
+        method: 'POST', credentials: 'same-origin',
+      });
+    } catch { /* ignore */ }
+    localStorage.removeItem('tingshu.user');
+    location.reload();
+  }
+
   function bind() {
+    el.authForm.addEventListener('submit', submitAuth);
+    el.userBtn.addEventListener('click', () => {
+      if (state.user) openAccount();
+      else showAuth('login');
+    });
+    el.accountClose.addEventListener('click', () => { el.accountSheet.hidden = true; syncBodyScroll(); });
+    el.accountSheet.addEventListener('click', (e) => {
+      if (e.target === el.accountSheet) { el.accountSheet.hidden = true; syncBodyScroll(); }
+    });
+    el.accountUsersBtn.addEventListener('click', () => { void openUsers(); });
+    el.accountPasswordBtn.addEventListener('click', () => { void changePassword(); });
+    el.accountLogoutBtn.addEventListener('click', () => { void logout(); });
+    el.usersClose.addEventListener('click', () => { el.usersSheet.hidden = true; syncBodyScroll(); });
+    el.usersSheet.addEventListener('click', (e) => {
+      if (e.target === el.usersSheet) { el.usersSheet.hidden = true; syncBodyScroll(); }
+    });
+    el.newUserForm.addEventListener('submit', createUser);
+    el.layoutBtn.addEventListener('click', () => {
+      const steps = [0, 2, 3, 4, 5];
+      const i = steps.indexOf(state.columns);
+      state.columns = steps[(i + 1) % steps.length];
+      applyLayout();
+      void saveUserLayout();
+    });
+
     el.pickBtn.addEventListener('click', () => {
       if (state.source === 'net') openUploadSheet();
       else pickFolder();
@@ -4063,16 +4446,20 @@
     }
   }
 
-  async function init() {
-    await restoreSession();
+  async function afterAuth() {
+    applyPermissions();
 
-    // 本地没有书库时，试试服务器目录（OpenWrt 包里的 library.json）
-    if (!state.books.length) {
-      const netBooks = await loadServerLibrary();
-      if (netBooks) {
-        state.pendingHandle = null;
-        await setLibrary(netBooks);
-      }
+    const lastUser = localStorage.getItem('tingshu.user');
+    if (!lastUser || lastUser !== state.user) await clearUserCaches();
+    localStorage.setItem('tingshu.user', state.user);
+
+    await loadUserLayout();
+
+    // 服务器书库优先；连不上时保留本机文件夹模式
+    const netBooks = await loadServerLibrary();
+    if (netBooks) {
+      state.pendingHandle = null;
+      await setLibrary(netBooks);
     }
 
     // 从路由器拉一次进度 + 合集 + 书籍元数据，多端同步
@@ -4082,17 +4469,7 @@
     await pullServerPauseMarks();
 
     applyTheme();
-    bind();
-    setupMediaSession();
-    ensureBookIcon();
-
-    setRate(state.settings.rate);
-    setVolume(state.settings.volume, true);
-    updateTimerUI();
-    updatePlayState();
-    document.body.classList.toggle('mini-hidden', !state.current);
-    el.sortBtn.textContent = { recent: '最近收听', title: '书名', progress: '进度' }[state.settings.sort] || '最近收听';
-
+    applyLayout();
     renderLibrary();
 
     // 恢复上次听到的位置（不自动播放）
@@ -4107,6 +4484,43 @@
       el.audio.pause();
       updatePlayState();
     }
+  }
+
+  async function init() {
+    await restoreSession();
+
+    applyTheme();
+    bind();
+    setupMediaSession();
+    ensureBookIcon();
+
+    setRate(state.settings.rate);
+    setVolume(state.settings.volume, true);
+    updateTimerUI();
+    updatePlayState();
+    document.body.classList.toggle('mini-hidden', !state.current);
+    el.sortBtn.textContent = { recent: '最近收听', title: '书名', progress: '进度' }[state.settings.sort] || '最近收听';
+    applyLayout();
+
+    const auth = await fetchAuthStatus();
+    if (!auth) {
+      showAuth('login', '连不上服务器，请检查地址或服务是否启动');
+      return;
+    }
+    state.configured = !!auth.configured;
+    if (!auth.configured) {
+      showAuth('setup');
+      return;
+    }
+    if (!auth.authenticated) {
+      showAuth('login');
+      return;
+    }
+
+    state.user = auth.user;
+    state.role = auth.role;
+    applyPermissions();
+    await afterAuth();
   }
 
   init();
