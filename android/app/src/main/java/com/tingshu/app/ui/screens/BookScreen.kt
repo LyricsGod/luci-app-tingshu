@@ -264,11 +264,12 @@ fun BookScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
-                        // 已听时长 / 全书时长（拿不到每章时长时退回按章节数）
+                        // 还剩多少小时（拿不到每章时长时退回按章节数）
                         if (hoursReady) {
+                            val remainingSeconds = (totalSeconds - listenedSeconds).coerceAtLeast(0.0)
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                text = "已听 ${fmtHours(listenedSeconds)}h/${fmtHours(totalSeconds)}h",
+                                text = if (remainingSeconds < 60) "已听完" else "剩余 ${fmtHours(remainingSeconds)} 小时",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
                             )
