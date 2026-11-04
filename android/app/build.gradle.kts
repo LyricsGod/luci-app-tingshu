@@ -40,6 +40,8 @@ android {
 
     buildFeatures {
         compose = true
+        // AGP 8 默认不再生成 BuildConfig；设置页要用 BuildConfig.VERSION_NAME 显示版本
+        buildConfig = true
     }
 
     lint {

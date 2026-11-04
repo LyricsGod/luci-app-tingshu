@@ -3,6 +3,7 @@ package com.tingshu.app.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import com.tingshu.app.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -240,7 +241,7 @@ fun SettingsScreen(
             }
 
             SectionCard("关于") {
-                InfoLine("客户端版本", "1.3.3")
+                InfoLine("客户端版本", BuildConfig.VERSION_NAME)
                 InfoLine("接口", "/cgi-ts · 听书 1.4.x")
                 ActionRow("在浏览器中打开网页版") {
                     if (serverUrl.isNotBlank()) {

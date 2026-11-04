@@ -1,13 +1,21 @@
 package com.tingshu.app.data
 
+import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** 进度备份文件（和网页端 exportProgress 的格式一致）。 */
 object ProgressBackup {
 
     const val VERSION = 1
 
-    fun exportJson(progress: Map<String, Progress>, exportedAt: Long = System.currentTimeMillis()): String {
+    /** 只导出真正听过的记录（有进度或有已听完章节）。 */
+    fun exportJson(
+        progress: Map<String, Progress>,
+        exportedAt: Long = System.currentTimeMillis(),
+    ): String {
         val items = JSONObject()
         for ((bookId, p) in progress) {
             if (!p.isReal) continue
@@ -16,8 +24,8 @@ object ProgressBackup {
                 JSONObject()
                     .put("index", p.index.coerceAtLeast(0))
                     .put("time", p.time.coerceAtLeast(0.0))
-                    .put("done", org.json.JSONArray(p.done))
-                    .put("updatedAt", p.updatedAt)
+                    .put("done", JSONArray(p.done))
+                    .put("updatedAt", p.updatedAt),
             )
         }
         return JSONObject()
@@ -56,8 +64,7 @@ object ProgressBackup {
     }
 
     fun fileName(now: Long = System.currentTimeMillis()): String {
-        val d = java.util.Date(now)
-        val f = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
-        return "tingshu-progress-${f.format(d)}.json"
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date(now))
+        return "tingshu-progress-$stamp.json"
     }
 }

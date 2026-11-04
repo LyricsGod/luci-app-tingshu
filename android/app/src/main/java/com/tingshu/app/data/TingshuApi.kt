@@ -407,6 +407,36 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         json.optInt("books", 0) to json.optInt("tracks", 0)
     }
 
+    /** 建连接：统一超时、禁用缓存、带上会话 token。 */
+    private fun openConnection(
+        url: String,
+        method: String,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+    ): HttpURLConnection {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.requestMethod = method
+        conn.connectTimeout = connectTimeoutMs
+        conn.readTimeout = readTimeoutMs
+        conn.useCaches = false
+        tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let { token ->
+            conn.setRequestProperty("Cookie", "tingshu_session=$token")
+            conn.setRequestProperty("Authorization", "Bearer $token")
+        }
+        return conn
+    }
+
+    /** 读响应；非 2xx 抛 [ApiException]，错误正文截断后带在消息里。 */
+    private fun readResponse(conn: HttpURLConnection): String {
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        if (code !in 200..299) {
+            throw ApiException(code, "HTTP $code ${text.take(120)}".trim())
+        }
+        return text
+    }
+
     private fun request(
         url: String,
         method: String = "GET",
@@ -414,35 +444,17 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         contentType: String? = null,
         timeoutMs: Int = 12000,
     ): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = openConnection(url, method, timeoutMs, timeoutMs * 2)
         try {
-            conn.requestMethod = method
-            conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs * 2
-            conn.useCaches = false
             conn.setRequestProperty("Accept", "application/json, */*")
             conn.setRequestProperty("Cache-Control", "no-cache")
-            tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                conn.setRequestProperty("Cookie", "tingshu_session=$it")
-                conn.setRequestProperty("Authorization", "Bearer $it")
-            }
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", contentType ?: "application/octet-stream")
                 conn.setFixedLengthStreamingMode(body.size)
-            }
-
-            if (body != null) {
                 conn.outputStream.use { it.write(body) }
             }
-
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            if (code !in 200..299) {
-                throw ApiException(code, "HTTP $code ${text.take(120)}".trim())
-            }
-            return text
+            return readResponse(conn)
         } finally {
             conn.disconnect()
         }
@@ -455,32 +467,17 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         contentType: String,
         timeoutMs: Int = 120000,
     ): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = openConnection(url, "POST", 10000, timeoutMs)
         try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 10000
-            conn.readTimeout = timeoutMs
-            conn.useCaches = false
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", contentType)
             conn.setFixedLengthStreamingMode(file.length())
-            tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                conn.setRequestProperty("Cookie", "tingshu_session=$it")
-                conn.setRequestProperty("Authorization", "Bearer $it")
-            }
             file.inputStream().use { input ->
                 conn.outputStream.use { output ->
                     input.copyTo(output, 64 * 1024)
                 }
             }
-
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            if (code !in 200..299) {
-                throw ApiException(code, "HTTP $code ${text.take(120)}".trim())
-            }
-            return text
+            return readResponse(conn)
         } finally {
             conn.disconnect()
         }
