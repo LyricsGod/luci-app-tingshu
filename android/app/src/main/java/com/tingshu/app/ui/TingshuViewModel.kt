@@ -98,6 +98,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val scanning = MutableStateFlow(false)
     val foundServers = MutableStateFlow<List<String>>(emptyList())
     val refreshing = MutableStateFlow(false)
+    /** 书籍页下拉刷新的转圈状态 */
+    val bookRefreshing = MutableStateFlow(false)
     val rescanning = MutableStateFlow(false)
     val sleep = MutableStateFlow(SleepState())
     val uploadState = MutableStateFlow<UploadState>(UploadState.Idle)
@@ -152,6 +154,24 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /* ---------------- 书库 ---------------- */
+
+    /** 书籍页下拉刷新：重新拉这本书的暂停记录和听书进度（继续播放时间）。 */
+    fun refreshBookData() {
+        val base = serverUrl.value.ifBlank { prefs.serverUrl }
+        if (base.isBlank()) return
+        if (bookRefreshing.value) return
+        viewModelScope.launch {
+            bookRefreshing.value = true
+            try {
+                pullProgress(base)
+                if (pullPauseMarks(base)) schedulePushPauseMarks()
+            } catch (t: Throwable) {
+                if (!isAuthError(t)) messages.tryEmit(humanError(t))
+            } finally {
+                bookRefreshing.value = false
+            }
+        }
+    }
 
     fun reload(initial: Boolean = false) {
         val base = serverUrl.value.ifBlank { prefs.serverUrl }

@@ -144,6 +144,9 @@ html[data-theme="dark"] .logo { background: linear-gradient(150deg, #e6a375, #b9
   color: var(--text-2); transition: .18s; flex: none;
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+/* 刷新按钮：转圈表示正在拉取 */
+.icon-btn.busy svg { animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .icon-btn:active { transform: scale(.94); }
 
 .i-sun { display: none; }

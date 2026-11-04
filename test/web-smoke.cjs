@@ -286,6 +286,15 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   click($('#backBtn'));
   check('返回书架', $('#bookView').hidden && !$('#libraryView').hidden);
 
+  /* ---- 顶栏刷新按钮：重新拉书库 + 暂停记录 ---- */
+  check('顶栏有刷新按钮', !!$('#refreshBtn'));
+  const libBefore = requests.filter((r) => r.url.startsWith('library.json')).length;
+  const pmBefore = requests.filter((r) => r.url.includes('cgi-ts/pausemarks')).length;
+  click($('#refreshBtn'));
+  await new Promise((r) => setTimeout(r, 400));
+  check('刷新按钮重新拉了书库', requests.filter((r) => r.url.startsWith('library.json')).length > libBefore);
+  check('刷新按钮重新拉了暂停记录', requests.filter((r) => r.url.includes('cgi-ts/pausemarks')).length > pmBefore);
+
   /* ---- 服务器备份：管理员权限 + 5 种模式 ---- */
   check('管理员可见备份入口', !$('#backupBtn').hidden);
   click($('#backupBtn'));

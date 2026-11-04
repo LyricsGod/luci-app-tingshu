@@ -42,7 +42,7 @@ uhttpd(:8686) ──► /tmp/tingshu/www        网页本体 + library.json（�
 
 **端**
 
-- 网页：零依赖单页应用，无构建、无第三方库，手机 / 平板 / 桌面自适应，日间 / 夜间主题
+- 网页：零依赖单页应用，无构建、无第三方库，手机 / 平板 / 桌面自适应，日间 / 夜间主题；顶栏刷新按钮可手动重新拉书架和暂停记录
 - 安卓：Kotlin + Jetpack Compose + Media3，功能与网页版对齐，详见 [android/README.md](android/README.md)
 
 ## 快速开始

@@ -46,6 +46,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -91,6 +92,7 @@ fun BookScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val progress by vm.progress.collectAsStateWithLifecycle()
+    val bookRefreshing by vm.bookRefreshing.collectAsStateWithLifecycle()
     val playerState by vm.playerState.collectAsStateWithLifecycle()
     val collections by vm.collections.collectAsStateWithLifecycle()
     val authRole by vm.authRole.collectAsStateWithLifecycle()
@@ -188,7 +190,12 @@ fun BookScreen(
             )
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        PullToRefreshBox(
+            isRefreshing = bookRefreshing,
+            onRefresh = { vm.refreshBookData() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = chapterListState,
             modifier = Modifier.fillMaxSize(),
@@ -433,6 +440,7 @@ fun BookScreen(
                         .fillMaxHeight(),
                 )
             }
+        }
         }
     }
 

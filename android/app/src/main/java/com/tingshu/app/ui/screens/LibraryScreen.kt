@@ -44,10 +44,12 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +87,7 @@ import com.tingshu.app.ui.dialogs.UploadDialog
 import java.text.Collator
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     vm: TingshuViewModel,
@@ -162,6 +165,11 @@ fun LibraryScreen(
                 ?.let { entry -> books.firstOrNull { it.id == entry.key } }
     }
 
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = { vm.reload() },
+        modifier = Modifier.fillMaxSize(),
+    ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns.coerceIn(2, 5)),
         modifier = Modifier.fillMaxSize(),
@@ -311,6 +319,7 @@ fun LibraryScreen(
                 },
             )
         }
+    }
     }
 
     editingBook?.let { book ->

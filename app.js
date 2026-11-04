@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.4';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.5';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -145,6 +145,7 @@
     backupSheet: $('#backupSheet'),
     backupClose: $('#backupClose'),
     backupBtn: $('#backupBtn'),
+    refreshBtn: $('#refreshBtn'),
     brand: $('.brand'),
     backupInfo: $('#backupInfo'),
     backupModes: $('#backupModes'),
@@ -3293,6 +3294,33 @@
     return mergePauseMarks(remote);
   }
 
+  /* 顶栏刷新按钮：重新拉书架、暂停记录、进度和合集，多端同时用时可以手动对齐 */
+  let refreshBusy = false;
+  async function refreshAll() {
+    if (refreshBusy) return;
+    refreshBusy = true;
+    el.refreshBtn.classList.add('busy');
+    el.refreshBtn.disabled = true;
+    try {
+      if (state.source === 'net' || !state.books.length) {
+        const books = await loadServerLibrary();
+        if (books) await setLibrary(books);
+      }
+      await pullServerProgress();
+      await pullServerCollections();
+      await pullServerPauseMarks();
+      renderLibrary();
+      if (state.bookView) renderBookView(state.bookView);
+      if (!el.pausemarksSheet.hidden && state.bookView) await renderPauseMarks(state.bookView.id);
+      toast('已刷新书架和暂停记录', 1500);
+    } catch (err) {
+      toast('刷新失败：' + (err.message || err), 2600);
+    } finally {
+      refreshBusy = false;
+      el.refreshBtn.classList.remove('busy');
+      el.refreshBtn.disabled = false;
+    }
+  }
   /**
    * 推送暂停记录：先拉一遍合并，再把完整状态（记录 + 墓碑）写回。
    * 只推本地列表会覆盖掉另一台设备刚记的内容，所以这里必须先读后写。
@@ -4342,6 +4370,7 @@
 
   /* 备份 / 暂停记录 / 版本信息 */
   function bindBackupEvents() {
+    el.refreshBtn.addEventListener('click', refreshAll);
     el.backupBtn.addEventListener('click', openBackupSheet);
     el.backupClose.addEventListener('click', closeBackupSheet);
     el.backupSheet.addEventListener('click', (e) => {
