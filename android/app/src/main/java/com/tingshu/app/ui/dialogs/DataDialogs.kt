@@ -435,7 +435,6 @@ fun PauseMarksDialog(
                     PauseMarkRow(
                         mark = mark,
                         trackTitle = displayTrackTitle(mark, booksById),
-                        showBook = bookId == null,
                         onClick = {
                             vm.playFromMark(mark)
                             onJump()
@@ -470,7 +469,6 @@ fun PauseMarksDialog(
 @Composable
 private fun PauseMarkRow(
     mark: PauseMark,
-    showBook: Boolean,
     trackTitle: String,
     onClick: () -> Unit,
     onDelete: () -> Unit,
@@ -502,17 +500,15 @@ private fun PauseMarkRow(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                text = if (showBook) mark.bookTitle.ifBlank { "未知书籍" } else trackTitle,
+                text = mark.bookTitle.ifBlank { "未知书籍" },
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = buildString {
-                    if (showBook) {
-                        append(trackTitle)
-                        append(" · ")
-                    }
+                    append(trackTitle)
+                    append(" · ")
                     append(formatTime(mark.time))
                     append(" · ")
                     append(reasonLabel(mark.reason))
