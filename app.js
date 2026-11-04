@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.1';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.2';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -3743,6 +3743,28 @@
     return badge;
   }
 
+  /**
+   * 暂停记录里显示的章节名。列表第一行已经是书名了，这里只留章节号（如「19」，
+   * 和网页端一直以来的显示一致），手机端按同一规则重算，两边看起来才一样。
+   */
+  function shortChapterLabel(title, index) {
+    const t = String(title || '').trim();
+    if (!t) return `第 ${index + 1} 章`;
+    const want = index + 1;
+    const lead = t.match(/^(\d{1,3})(?=\s|$)/);
+    if (lead && Number(lead[1]) === want) return lead[1];
+    const tail = t.match(/(?:^|\s)(\d{1,3})$/);
+    if (tail && Number(tail[1]) === want) return tail[1];
+    return t;
+  }
+
+  function pauseMarkTrackTitle(mark) {
+    const book = state.books.find((b) => b.id === mark.bookId);
+    const track = book && book.tracks[mark.index];
+    const title = (track && track.title) || mark.trackTitle || '';
+    return shortChapterLabel(title, mark.index);
+  }
+
   async function openPauseMarks(bookId) {
     openOverlay(el.pausemarksSheet);
     await renderPauseMarks(bookId);
@@ -3776,7 +3798,7 @@
       title.textContent = m.bookTitle;
       const sub = document.createElement('div');
       sub.className = 'pm-sub';
-      sub.textContent = `${m.trackTitle} · ${fmtTime(m.time)} · ${REASON_LABEL[m.reason] || '暂停'} · ${fmtStamp(m.createdAt)}`;
+      sub.textContent = `${pauseMarkTrackTitle(m)} · ${fmtTime(m.time)} · ${REASON_LABEL[m.reason] || '暂停'} · ${fmtStamp(m.createdAt)}`;
       main.append(title, sub);
 
       const del = document.createElement('span');

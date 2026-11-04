@@ -106,6 +106,7 @@ const BOOKS = {
       tracks: [
         { title: '01', path: 'ming/01.mp3' },
         { title: '02', path: 'ming/02.mp3' },
+        { title: '03. 龙岭迷窟 03', path: 'ming/03.mp3' },
       ],
     },
   ],
@@ -218,7 +219,7 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   check('找到《明朝那些事儿》卡片', !!card);
   click(card);
   check('进入书籍详情', !$('#bookView').hidden && $('#libraryView').hidden);
-  check('章节列表渲染 2 条', $$('#trackList .track-item').length === 2);
+  check('章节列表渲染 3 条', $$('#trackList .track-item').length === 3);
   check('书名显示正确', $('#bookTitle').textContent === '明朝那些事儿');
 
   /* ---- 暂停记录：来源标记（网页端记 web，列表里显示小图标） ---- */
@@ -243,8 +244,8 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
 
   /* ---- 云端合并：另一端记的会并进来，删除墓碑能删掉本地那份 ---- */
   const remoteMark = {
-    id: 'pm-remote-1', bookId: 'net:ming', bookTitle: '明朝那些事儿', index: 1,
-    trackTitle: '02 红岸', time: 9, reason: 'pause', createdAt: Date.now() + 1000, source: 'app',
+    id: 'pm-remote-1', bookId: 'net:ming', bookTitle: '明朝那些事儿', index: 2,
+    trackTitle: '龙岭迷窟 03', time: 9, reason: 'pause', createdAt: Date.now() + 1000, source: 'app',
   };
   routes['cgi-ts/pausemarks'] = { ok: true, items: [remoteMark], removed: {} };
   w.document.dispatchEvent(new w.Event('visibilitychange'));
@@ -253,6 +254,8 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   await new Promise((r) => setTimeout(r, 60));
   check('另一端的记录会并进来', $$('#pausemarksList .pm-item').length === 2);
   check('并进来的记录显示移动端图标', $$('#pausemarksList .pm-src.app').length === 1);
+  const mergedSub = $$('#pausemarksList .pm-item')[0].querySelector('.pm-sub').textContent;
+  check('章节号按网页端的短格式显示', mergedSub.startsWith('03 ·'));
 
   routes['cgi-ts/pausemarks'] = {
     ok: true,

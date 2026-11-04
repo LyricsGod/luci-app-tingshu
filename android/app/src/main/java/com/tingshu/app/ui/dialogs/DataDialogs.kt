@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tingshu.app.data.Book
 import com.tingshu.app.data.PauseMark
 import com.tingshu.app.data.ProgressBackup
 import com.tingshu.app.data.UploadState
@@ -396,6 +397,8 @@ fun PauseMarksDialog(
     onDismiss: () -> Unit,
 ) {
     val all by vm.pauseMarks.collectAsStateWithLifecycle()
+    val books by vm.books.collectAsStateWithLifecycle()
+    val booksById = remember(books) { books.associateBy { it.id } }
     val marks = remember(all, bookId) {
         all.filter { bookId == null || it.bookId == bookId }.sortedByDescending { it.createdAt }
     }
@@ -431,6 +434,7 @@ fun PauseMarksDialog(
                 items(marks, key = { it.id }) { mark ->
                     PauseMarkRow(
                         mark = mark,
+                        trackTitle = displayTrackTitle(mark, booksById),
                         showBook = bookId == null,
                         onClick = {
                             vm.playFromMark(mark)
@@ -467,6 +471,7 @@ fun PauseMarksDialog(
 private fun PauseMarkRow(
     mark: PauseMark,
     showBook: Boolean,
+    trackTitle: String,
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -497,7 +502,7 @@ private fun PauseMarkRow(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                text = if (showBook) mark.bookTitle.ifBlank { "未知书籍" } else mark.trackTitle,
+                text = if (showBook) mark.bookTitle.ifBlank { "未知书籍" } else trackTitle,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -505,7 +510,7 @@ private fun PauseMarkRow(
             Text(
                 text = buildString {
                     if (showBook) {
-                        append(mark.trackTitle)
+                        append(trackTitle)
                         append(" · ")
                     }
                     append(formatTime(mark.time))
@@ -535,6 +540,22 @@ private fun reasonLabel(reason: String): String = when (reason) {
     "timer" -> "定时暂停"
     "timer-start" -> "开启定时"
     else -> "暂停"
+}
+
+/** 暂停记录里只显示章节号（如「19」）：第一行已经是书名了，和网页端保持一致。 */
+private fun displayTrackTitle(mark: PauseMark, books: Map<String, Book>): String {
+    val track = books[mark.bookId]?.tracks?.getOrNull(mark.index)
+    val title = track?.title?.takeIf { it.isNotBlank() } ?: mark.trackTitle
+    return shortChapterLabel(title, mark.index)
+}
+
+private fun shortChapterLabel(title: String, index: Int): String {
+    val t = title.trim()
+    if (t.isEmpty()) return "第 ${index + 1} 章"
+    val want = index + 1
+    Regex("^(\\d{1,3})(?=\\s|$)").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
+    Regex("(?:^|\\s)(\\d{1,3})$").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
+    return t
 }
 
 private fun stamp(ts: Long): String =
