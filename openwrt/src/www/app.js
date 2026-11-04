@@ -1,6 +1,11 @@
 /* ===========================================================
-   听书 · 本地离线书架
-   纯前端，无任何网络请求；音频直接读取本机文件夹。
+   听书 · 网页书架
+   纯前端渲染 + 少量同源 CGI；音频既可以来自本机文件夹，
+   也可以来自路由器书库（library.json / media/*）。
+
+   组织方式：
+     常量 → DOM 引用 → 运行状态 → IndexedDB → 工具函数 → 业务模块
+     （书库扫描 / 渲染 / 播放 / 合集 / 上传 / 同步）→ 事件绑定 → 启动
    =========================================================== */
 
 (() => {
@@ -8,12 +13,24 @@
 
   /* ================= 常量 ================= */
 
+  const APP_VERSION = '1.4.2';   // 打包脚本会从这里读取版本号，改这一处即可
+
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
   const SPEEDS = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
-  const SEEK_STEP = 30;
-  const SAVE_EVERY = 4000;
+  const SEEK_STEP = 30;          // 快进 / 快退步长（秒）
+  const SAVE_EVERY = 4000;       // 播放中落盘间隔（毫秒）
+  const PUSH_EVERY = 15000;      // 播放中向服务器推送进度的最短间隔（毫秒）
+  const PROGRESS_FILE_VERSION = 1;
+
+  const SORTS = ['recent', 'title', 'progress'];
+  const SORT_LABELS = { recent: '最近收听', title: '书名', progress: '进度' };
+  const THEMES = ['auto', 'dark', 'light'];
+  const THEME_LABELS = { auto: '跟随系统', dark: '夜间模式', light: '日间模式' };
+
   const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+  const isFiniteNumber = (n) => typeof n === 'number' && Number.isFinite(n);
+  const ignore = () => {};
 
   const PALETTES = [
     ['#caa27c', '#8a6849'], ['#a8b6c6', '#5e6f81'], ['#c4b1a1', '#7d6a58'],
@@ -64,7 +81,6 @@
     sheetTrack: $('#sheetTrack'),
     sheetBadge: $('#sheetTimerBadge'),
     sheetFoot: $('#sheetFoot'),
-    sheetKicker: $('#sheetKicker'),
     collapseBtn: $('#collapseBtn'),
     seekBar: $('#seekBar'),
     curTime: $('#curTime'),
@@ -207,10 +223,9 @@
     user: null,
     role: '',
     columns: 0,
-    configured: true,
     authShown: false,
     users: [],
-    sleep: { mode: 'off', endsAt: 0, minutes: 0, pending: false },
+    sleep: { mode: 'off', endsAt: 0, minutes: 0, pending: false, finishTrack: false },
     filter: '',
     source: 'local',      // local = 本机文件夹，net = 路由器/服务器书库
     serverRoot: '',
@@ -218,23 +233,31 @@
     pendingHandle: null,
     scanning: false,
     scrubbing: false,
-    playedOnce: false,   // 本次会话是否真的播放过（用于判断是否推送进度）
+    playedOnce: false,    // 本次会话是否真的播放过（用于判断是否推送进度）
   };
 
+  // 播放器相关的临时状态（不进 state：这些值不需要被渲染逻辑读取）
   let objectUrl = null;
-  let currentBlob = null;   // 保住当前章节的 blob 引用，防止安卓后台 GC 后 blob URL 失效
+  let currentBlob = null;      // 保住当前章节的 blob 引用，防止安卓后台 GC 后 blob URL 失效
   let loadToken = 0;
-  let prefetchCache = null;   // 预取的下一章 { bookId, index, file }，后台切章时避免 fetch 挂起
+  let prefetchCache = null;    // 预取的下一章 { bookId, index, file }，后台切章时避免 fetch 挂起
   let prefetchToken = 0;
   let switchingTrack = false;  // 正在切换章节（此时触发的 pause 不记录为暂停）
   let switchingTrackTimer = null;
   let timerPausing = false;    // 定时到点正在暂停（此时 pause 事件按 'timer' 记录，避免重复）
+  let reloadingPlay = false;
   let lastSaveAt = 0;
   let sleepTimer = null;
   let fadeTimer = null;
   let durScanToken = 0;
   let toastTimer = null;
   let popoverAnchor = null;
+  let bookIconDataUrl = null;  // Canvas 画的兜底封面，给 MediaSession 用
+  let settingsSaveTimer = null;
+
+  // 服务器能力开关：拉取成功后才允许回推，避免离线时刷一堆失败请求
+  let syncEnabled = false;
+  let colSyncEnabled = false;
 
   /* ================= IndexedDB ================= */
 
@@ -312,10 +335,13 @@
   const LAYOUT_API = 'cgi-ts/layout';
   const nativeFetch = window.fetch.bind(window);
 
-  // 所有 CGI 都带上 cookie，401 时弹登录；音频/封面等静态资源不走这里
+  /**
+   * 给所有 CGI 请求补上同源 cookie，并在 401 时统一拉起登录层。
+   * 音频、封面、library.json 这些静态资源不经过这里（否则会多一次判断）。
+   */
   window.fetch = (input, init = {}) => {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
-    if (url.indexOf('cgi-ts/') < 0) return nativeFetch(input, init);
+    if (!url.includes('cgi-ts/')) return nativeFetch(input, init);
     return nativeFetch(input, { credentials: 'same-origin', ...init }).then(res => {
       if (res.status === 401) onAuthLost();
       return res;
@@ -326,8 +352,9 @@
     return state.role === 'admin';
   }
 
-  function clampColumns(n) {
-    n = Math.round(Number(n) || 0);
+  /** 每行本数：0 = 自动，否则限制在 2~5 */
+  function clampColumns(value) {
+    const n = Math.round(Number(value) || 0);
     if (n <= 0) return 0;
     return Math.max(2, Math.min(5, n));
   }
@@ -373,9 +400,9 @@
   }
 
   async function clearUserCaches() {
-    try { await dbClear('progress'); } catch { /* ignore */ }
-    try { await dbClear('collections'); } catch { /* ignore */ }
-    try { await dbClear('pausemarks'); } catch { /* ignore */ }
+    try { await dbClear('progress'); } catch { /* 缓存清不掉不影响使用 */ }
+    try { await dbClear('collections'); } catch { /* 同上 */ }
+    try { await dbClear('pausemarks'); } catch { /* 同上 */ }
     state.progress.clear();
     state.collections = [];
     syncEnabled = false;
@@ -388,23 +415,35 @@
   const isAudio = (name) => AUDIO_EXT.has(extOf(name));
   const isImage = (name) => IMG_EXT.has(extOf(name));
 
+  /** 秒 → 0:00 / 0:00:00 */
   function fmtTime(sec) {
-    if (!isFinite(sec) || sec < 0) sec = 0;
-    const s = Math.floor(sec % 60);
-    const m = Math.floor((sec / 60) % 60);
-    const h = Math.floor(sec / 3600);
+    const v = isFiniteNumber(sec) && sec > 0 ? sec : 0;
+    const s = Math.floor(v % 60);
+    const m = Math.floor((v / 60) % 60);
+    const h = Math.floor(v / 3600);
     return (h > 0 ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
   }
 
+  /** 秒 → 「40 分钟」「1.5 小时」 */
   function fmtRuntime(sec) {
-    if (!sec || !isFinite(sec)) return '';
+    if (!isFiniteNumber(sec) || sec <= 0) return '';
     if (sec < 60) return `${Math.round(sec)} 秒`;
     return sec >= 3600 ? `${(sec / 3600).toFixed(1)} 小时` : `${Math.round(sec / 60)} 分钟`;
   }
 
+  /** 字节 → 可读体积 */
+  function fmtSize(n) {
+    if (!n) return '0 B';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  /** 书名 hash → 稳定的封面渐变色 */
   function coverGradient(title) {
     let h = 7;
-    for (const ch of title) h = (h * 131 + ch.codePointAt(0)) >>> 0;
+    for (const ch of String(title || '')) h = (h * 131 + ch.codePointAt(0)) >>> 0;
     const p = PALETTES[h % PALETTES.length];
     return `linear-gradient(148deg, ${p[0]} 0%, ${p[1]} 100%)`;
   }
@@ -428,14 +467,13 @@
     toastTimer = setTimeout(() => { el.toast.hidden = true; }, ms);
   }
 
-  /* 点击首页品牌，弹出启动时间与版本号 */
+  /* 点击首页品牌，弹出构建信息与版本号 */
   function showVersionInfo() {
-    const boot = window.__BOOT_STAMP__;
-    const build = window.__BUILD_VER__;
-    const appVersion = '1.4.2';
-    let info = '听书 v' + appVersion;
-    if (build && build !== '@BUILD@') info += ' · 启动 ' + build;
-    if (boot && boot !== '@BOOT@') info += ' · 构建 ' + boot;
+    const stamp = window.__BUILD_VER__;     // init.d 注入的构建时间（人可读）
+    const bootId = window.__BOOT_STAMP__;   // 每次启动变化的时间戳，用于刷缓存
+    let info = '听书 v' + APP_VERSION;
+    if (stamp && stamp !== '@BUILD@') info += ' · 构建 ' + stamp;
+    else if (bootId && bootId !== '@BOOT@') info += ' · 构建戳 ' + bootId;
     info += ' · 来源 ' + (state.source === 'net' ? '路由器' : '本机');
     toast(info, 4200);
   }
@@ -446,14 +484,28 @@
     ));
   }
 
-  /* 任何一个全屏层打开时锁住页面滚动 */
+  /* ---- 全屏层（弹窗 / 播放器面板）统一开关 ---- */
+
+  const OVERLAYS = [
+    'sheet', 'editSheet', 'cropSheet', 'collectionSheet', 'colEditSheet',
+    'uploadSheet', 'backupSheet', 'pausemarksSheet', 'authSheet',
+    'accountSheet', 'usersSheet',
+  ];
+
+  /** 任何一个全屏层打开时锁住页面滚动 */
   function syncBodyScroll() {
-    const locked = !el.editSheet.hidden || !el.collectionSheet.hidden
-      || !el.colEditSheet.hidden || !el.sheet.hidden || !el.uploadSheet.hidden
-      || !el.backupSheet.hidden || !el.pausemarksSheet.hidden
-      || !el.cropSheet.hidden || !el.authSheet.hidden
-      || !el.accountSheet.hidden || !el.usersSheet.hidden;
+    const locked = OVERLAYS.some(key => el[key] && !el[key].hidden);
     document.body.style.overflow = locked ? 'hidden' : '';
+  }
+
+  function openOverlay(node) {
+    node.hidden = false;
+    syncBodyScroll();
+  }
+
+  function closeOverlay(node) {
+    node.hidden = true;
+    syncBodyScroll();
   }
 
   const durKey = (book, i) => book.id + '::' + book.tracks[i].path;
@@ -525,6 +577,7 @@
     return coverGradient(book.folderTitle || book.title);
   }
 
+  /** 扫描本机文件夹：每个子目录一本书，根目录散落的音频单独成一本 */
   async function scanLibrary(root) {
     const books = [];
     const loose = [];
@@ -573,12 +626,11 @@
     }
   }
 
-  async function setLibrary(books, rootName) {
+  async function setLibrary(books) {
     state.books = books;
     await applyMeta(books);
     await loadCovers(books);
     renderLibrary();
-    void rootName;
   }
 
   /* ================= 服务器书库（OpenWrt / 局域网） ================= */
@@ -621,6 +673,7 @@
     };
   }
 
+  /** 拉取路由器书库索引；连不上或格式不对返回 null，调用方据此保留本机模式 */
   async function loadServerLibrary() {
     let data;
     try {
@@ -715,10 +768,15 @@
 
   /* ================= 进度计算 ================= */
 
+  /** 取某本书的进度记录（没有则返回 null） */
   function progressOf(bookId) {
     return state.progress.get(bookId) || null;
   }
 
+  /**
+   * 计算一本书的整体进度。
+   * 已知所有章节时长时按「秒」算，否则退化成按「章节数」估算。
+   */
   function bookStats(book) {
     const p = progressOf(book.id);
     const n = book.tracks.length;
@@ -756,7 +814,7 @@
   /* ================= 渲染：书架 ================= */
 
   function paintCover(node, book, chars) {
-    node.innerHTML = '';
+    node.replaceChildren();
     node.style.background = coverStyleOf(book);
     const url = coverUrlOf(book);
     if (url) {
@@ -784,7 +842,9 @@
         return (pb.updatedAt || 0) - (pa.updatedAt || 0);
       });
     } else if (mode === 'progress') {
-      list.sort((a, b) => bookStats(b).frac - bookStats(a).frac);
+      // 先算一次进度再排序，避免比较函数里反复遍历章节
+      const frac = new Map(list.map(b => [b.id, bookStats(b).frac]));
+      list.sort((a, b) => frac.get(b.id) - frac.get(a.id));
     } else {
       list.sort((a, b) => collator.compare(a.title, b.title));
     }
@@ -802,7 +862,7 @@
     state.collections.forEach(c => (c.bookIds || []).forEach(id => collected.add(id)));
     const shelfBooks = books.filter(b => !collected.has(b.id));
 
-    el.bookGrid.innerHTML = '';
+    el.bookGrid.replaceChildren();
     const trulyEmpty = !state.books.length && !state.collections.length;
     el.libraryView.classList.toggle('is-empty', trulyEmpty);
 
@@ -951,7 +1011,7 @@
 
     el.resumeHero.hidden = false;
     el.resumeHero.dataset.id = book.id;
-    el.resumeHero.innerHTML = '';
+    el.resumeHero.replaceChildren();
 
     const cover = document.createElement('div');
     cover.className = 'book-cover hero-cover';
@@ -1090,7 +1150,7 @@
       freq.appendChild(li);
     });
 
-    el.trackList.innerHTML = '';
+    el.trackList.replaceChildren();
     el.trackList.appendChild(freq);
   }
 
@@ -1117,14 +1177,12 @@
     // 只有服务器书库的书才能删（本机文件不归我们管）
     el.bookDeleteBtn.hidden = !(state.source === 'net' && String(book.id).indexOf('net:') === 0);
 
-    el.editSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.editSheet);
     setTimeout(() => { try { el.editTitle.focus({ preventScroll: true }); } catch { el.editTitle.focus(); } }, 80);
   }
 
   function closeEditor() {
-    el.editSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.editSheet);
     if (editState.tempUrl) { URL.revokeObjectURL(editState.tempUrl); editState.tempUrl = null; }
     editState.book = null;
   }
@@ -1142,7 +1200,7 @@
   }
 
   function renderPaletteRow() {
-    el.paletteRow.innerHTML = '';
+    el.paletteRow.replaceChildren();
 
     const auto = document.createElement('button');
     auto.type = 'button';
@@ -1185,8 +1243,7 @@
       cropState.zoom = 1;
       cropState.ox = 0;
       cropState.oy = 0;
-      el.cropSheet.hidden = false;
-      syncBodyScroll();
+      openOverlay(el.cropSheet);
       requestAnimationFrame(() => {
         initCropCanvas();
         resetCrop();
@@ -1263,8 +1320,7 @@
   }
 
   function closeCropper() {
-    el.cropSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.cropSheet);
     cropState.img = null;
     cropState.pointers.clear();
     cropState.pinch = null;
@@ -1317,7 +1373,6 @@
     const desc = el.editDesc.value.trim();
     editState.title = el.editTitle.value;
     editState.desc = el.editDesc.value;
-    console.log('[save] 读取到 title=', typedTitle, 'desc=', desc, 'coverBlob=', !!editState.coverBlob, 'tempUrl=', !!editState.tempUrl);
     const rec = {
       bookId: b.id,
       title: typedTitle && typedTitle !== b.folderTitle ? typedTitle : '',
@@ -1337,14 +1392,10 @@
       b.userCover = editState.coverBlob;
       b.userCoverUrl = editState.tempUrl;
       editState.tempUrl = null;
-      console.log('[cover] 保存：有新封面', editState.coverBlob && editState.coverBlob.size);
     } else if (!editState.coverBlob) {
       if (b.userCoverUrl) URL.revokeObjectURL(b.userCoverUrl);
       b.userCover = null;
       b.userCoverUrl = null;
-      console.log('[cover] 保存：无封面（coverBlob 为空）');
-    } else {
-      console.log('[cover] 保存：保持旧封面', editState.coverBlob.size);
     }
 
     try {
@@ -1388,7 +1439,7 @@
   }
 
   function paintMosaic(node, col, list) {
-    node.innerHTML = '';
+    node.replaceChildren();
     node.classList.add('mosaic');
 
     // 九宫格：最多显示 9 本；不足 9 本用空位补齐，超过 9 本在最后一格叠 +N
@@ -1475,16 +1526,15 @@
     colState.sorting = false;
     colState.dragEl = null;
     renderCollectionView();
-    el.collectionSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.collectionSheet);
   }
 
   function closeCollection() {
-    el.collectionSheet.hidden = true;
     colState.sorting = false;
     colState.dragEl = null;
-    syncBodyScroll();
-    if (state.view === 'library') renderLibrary();
+    closeOverlay(el.collectionSheet);
+    // 合集面板盖在书架上：关掉后书架要跟着刷新（进度、合集数量都可能变了）
+    if (!el.libraryView.hidden) renderLibrary();
   }
 
   function currentCollection() {
@@ -1506,7 +1556,7 @@
     el.colSortBtn.textContent = colState.sorting ? '完成' : '调整顺序';
     el.colSortBtn.classList.toggle('on', colState.sorting);
 
-    el.colGrid.innerHTML = '';
+    el.colGrid.replaceChildren();
     list.forEach((book, i) => el.colGrid.appendChild(makeColTile(book, i, list.length)));
   }
 
@@ -1609,20 +1659,18 @@
     el.colDelete.hidden = !col;
     renderBookPicker(checked);
 
-    el.colEditSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.colEditSheet);
     setTimeout(() => {
       try { el.colEditName.focus({ preventScroll: true }); } catch { el.colEditName.focus(); }
     }, 80);
   }
 
   function closeCollectionEditor() {
-    el.colEditSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.colEditSheet);
   }
 
   function renderBookPicker(checked) {
-    el.colPickList.innerHTML = '';
+    el.colPickList.replaceChildren();
 
     // 新建合集时：已经在其它合集里的书不再显示（一本书只能属于一个合集）
     // 编辑合集时：显示全部书，但已在其它合集的也置灰不可勾，避免重复加入
@@ -1682,8 +1730,7 @@
   }
 
   function updatePickCount() {
-    const n = el.colPickList.querySelectorAll('input[type="checkbox"]').length
-      ? pickedBookIds().length : 0;
+    const n = pickedBookIds().length;
     el.colPickCount.textContent = n ? `已选 ${n} 本` : '';
   }
 
@@ -1733,8 +1780,7 @@
     pushServerCollections();
     closeCollectionEditor();
     if (colState.id === col.id) {
-      el.collectionSheet.hidden = true;
-      syncBodyScroll();
+      closeOverlay(el.collectionSheet);
     }
     renderLibrary();
     toast('合集已删除', 1400);
@@ -1769,6 +1815,7 @@
         }
         const added = await toggleBookInCollection(id, book.id);
         const col = state.collections.find(c => c.id === id);
+        if (!col) return;   // 合集可能在别处被删掉了
         btn.classList.toggle('on', added);
         const right = btn.querySelector('.pr-right');
         if (right) right.textContent = added ? '✓ 已加入' : booksOfCollection(col).length + ' 本';
@@ -1798,6 +1845,12 @@
     document.body.classList.toggle('mini-hidden', !v);
   }
 
+  /**
+   * 播放指定章节。
+   * @param {object} book
+   * @param {number} index 章节下标
+   * @param {{autoplay?: boolean, time?: number}} [opts] 起播位置（秒）
+   */
   async function playFrom(book, index, opts = {}) {
     const { autoplay = true, time = 0 } = opts;
     if (!book || !book.tracks[index]) return;
@@ -1856,8 +1909,17 @@
 
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     if (file) {
-      currentBlob = file;                       // 保住引用，防止后台 GC
-      objectUrl = URL.createObjectURL(file);
+      try {
+        objectUrl = URL.createObjectURL(file);
+        currentBlob = file;                     // 保住引用，防止后台 GC
+      } catch (err) {
+        // 极少见（内存不足 / blob 被回收）：别把整个页面拖进未捕获异常
+        console.error(err);
+        objectUrl = null;
+        currentBlob = null;
+        toast('这一章暂时无法播放，请稍后再试');
+        return;
+      }
     } else {
       currentBlob = null;
     }
@@ -1870,7 +1932,7 @@
 
     const startAt = () => {
       if (token !== loadToken) return;
-      const dur = isFinite(a.duration) ? a.duration : 0;
+      const dur = isFiniteNumber(a.duration) ? a.duration : 0;
       const at = time > 1 && dur && time < dur - 1 ? time : 0;
       if (at) a.currentTime = at;
       rememberDuration(book, index, dur);
@@ -1936,7 +1998,6 @@
   }
 
   // 音频源失效时重新加载当前章节并恢复播放
-  let reloadingPlay = false;
   function reloadAndPlay() {
     if (reloadingPlay || !state.current) return;
     reloadingPlay = true;
@@ -1961,7 +2022,7 @@
     const a = el.audio;
     if (a.paused) {
       // 已经播到结尾时，重新从本章开头开始
-      if (a.ended || (isFinite(a.duration) && a.duration > 0 && a.currentTime >= a.duration - 0.1)) {
+      if (a.ended || (isFiniteNumber(a.duration) && a.duration > 0 && a.currentTime >= a.duration - 0.1)) {
         a.currentTime = 0;
       }
       doPlay();
@@ -2019,12 +2080,18 @@
     await playFrom(book, start, { time });
   }
 
-  function rememberDuration(book, i, d) {
-    if (!d || !isFinite(d) || d <= 0) return;
+  /**
+   * 记住一章的时长。
+   * @param {boolean} [silent] 批量探测时置 true，避免每章都整页重绘
+   */
+  function rememberDuration(book, i, d, silent = false) {
+    if (!isFiniteNumber(d) || d <= 0) return;
     const k = durKey(book, i);
     if (state.durations.has(k)) return;
     state.durations.set(k, d);
-    dbPut('durations', { key: k, seconds: d }).catch(() => {});
+    dbPut('durations', { key: k, seconds: d }).catch(ignore);
+
+    if (silent) return;
     if (state.bookView && state.bookView.id === book.id) {
       updateBookStats(book);
       updateBookMeta(book);
@@ -2035,12 +2102,16 @@
     if (!el.libraryView.hidden) renderLibrary();
   }
 
-  /* 后台补齐整本书时长 */
+  /**
+   * 后台补齐整本书的时长：用一个隐藏的 audio 逐个探 metadata。
+   * 扫描期间只写缓存不重绘，扫完统一刷新一次界面。
+   */
   async function scanDurations(book) {
     if (!book || book.tracks.length > 800) return;
     const token = ++durScanToken;
     const probe = document.createElement('audio');
     probe.preload = 'metadata';
+    let changed = false;
 
     for (let i = 0; i < book.tracks.length; i++) {
       if (token !== durScanToken) break;
@@ -2064,18 +2135,28 @@
           probe.addEventListener('error', () => finish(0), { once: true });
           setTimeout(() => finish(0), 8000);
         });
-        if (d) rememberDuration(book, i, d);
-      } catch { /* 跳过读不到的文件 */ }
+        if (d) { rememberDuration(book, i, d, true); changed = true; }
+      } catch { /* 读不到的章节直接跳过 */ }
       finally { if (revoke && url) URL.revokeObjectURL(url); }
     }
     probe.src = '';
+
+    if (!changed) return;
+    if (state.bookView && state.bookView.id === book.id) {
+      // 原地更新时间，不整页重绘（避免把展开的简介收回去）
+      updateBookStats(book);
+      updateBookMeta(book);
+      book.tracks.forEach((_, i) => {
+        const d = state.durations.get(durKey(book, i));
+        const time = el.trackList.children[i] && el.trackList.children[i].querySelector('.t-time');
+        if (time && d) time.textContent = fmtTime(d);
+      });
+    } else if (!el.libraryView.hidden) {
+      renderLibrary();
+    }
   }
 
-  /* ================= 进度保存 ================= */
-
   /* ================= 进度导出 / 导入 ================= */
-
-  const PROGRESS_FILE_VERSION = 1;
 
   function downloadBlob(blob, name) {
     const url = URL.createObjectURL(blob);
@@ -2107,13 +2188,11 @@
 
   function openBackupSheet() {
     updateBackupInfo();
-    el.backupSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.backupSheet);
   }
 
   function closeBackupSheet() {
-    el.backupSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.backupSheet);
   }
 
   function exportProgress() {
@@ -2209,14 +2288,6 @@
   const MANAGE_API = 'cgi-ts/manage';
   const UPLOAD_RE = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|webm|ape|wma|jpg|jpeg|png|webp|gif|bmp|txt|nfo|m3u|m3u8|json|srt|lrc)$/i;
 
-  function fmtSize(n) {
-    if (!n) return '0 B';
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
-    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
-    return (n / 1073741824).toFixed(2) + ' GB';
-  }
-
   function openUploadSheet() {
     if (!isAdmin()) {
       toast('只有管理员可以上传书籍');
@@ -2232,13 +2303,11 @@
     el.uploadProgress.hidden = true;
     el.uploadBar.style.width = '0%';
     el.uploadStatus.textContent = '';
-    el.uploadSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.uploadSheet);
   }
 
   function closeUploadSheet() {
-    el.uploadSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.uploadSheet);
   }
 
   function setUploadBusy(busy) {
@@ -2600,7 +2669,6 @@
   const SYNC_API = 'cgi-ts/progress';
   const syncPushedAt = new Map();
   const syncLastSent = new Map();
-  let syncEnabled = false;
 
   function hexOf(str) {
     const bytes = new TextEncoder().encode(String(str));
@@ -2675,8 +2743,10 @@
     return 'b=' + core.b + '&i=' + core.i + '&t=' + core.t + '&d=' + core.d + '&u=' + u;
   }
 
-  /* 播放中每 15 秒最多推一次，暂停/切后台时强制推；
-     内容没变（同一章同一秒）就不推，免得旧位置把别的设备的新进度盖掉 */
+  /**
+   * 推送单本进度。播放中最多 15 秒一次，暂停/切后台时强制推；
+   * 内容没变（同一章同一秒）就不推，免得多端之间用旧位置互相覆盖。
+   */
   function pushServerProgress(bookId, rec, force) {
     if (!syncEnabled) return;
     const core = syncCore(bookId, rec);
@@ -2684,7 +2754,7 @@
     if (syncLastSent.get(bookId) === key) return;
 
     const now = Date.now();
-    if (!force && now - (syncPushedAt.get(bookId) || 0) < 15000) return;
+    if (!force && now - (syncPushedAt.get(bookId) || 0) < PUSH_EVERY) return;
 
     syncPushedAt.set(bookId, now);
     syncLastSent.set(bookId, key);
@@ -2720,7 +2790,6 @@
   /* ================= 合集云同步（服务器端） ================= */
 
   const COL_API = 'cgi-ts/collections';
-  let colSyncEnabled = false;
   let colPushTimer = null;
 
   function touchCollection(col) {
@@ -2810,7 +2879,6 @@
   /* ================= 书籍元数据云同步（书名/简介/配色/封面） ================= */
 
   const META_API = 'cgi-ts/meta';
-  let metaSyncEnabled = false;
   const metaPushedAt = new Map();
 
   function metaOf(book) {
@@ -2854,7 +2922,6 @@
         coverType,
         updatedAt: now,
       };
-      console.log('[meta] push desc=', m.desc, 'cover长度=', coverB64.length);
 
       const res = await fetch(META_API, {
         method: 'POST',
@@ -2893,7 +2960,6 @@
     } catch { return 0; }
     if (!data || data.ok !== true || !data.items) return 0;
 
-    metaSyncEnabled = true;
     let changed = 0;
 
     for (const hex in data.items) {
@@ -3040,6 +3106,11 @@
     return p;
   }
 
+  /**
+   * 把当前播放位置落盘（IndexedDB）并按需推送到服务器。
+   * @param {boolean} rerender 是否顺手刷新书架
+   * @param {boolean} forcePush 忽略推送节流
+   */
   function saveProgress(rerender = false, forcePush = false) {
     const c = state.current;
     if (!c) return;
@@ -3055,6 +3126,7 @@
     lastSaveAt = Date.now();
   }
 
+  /** 标记某章已听完 */
   function markDone(book, i) {
     const p = ensureProgress(book.id);
     if (!p.done.includes(i)) p.done.push(i);
@@ -3095,7 +3167,7 @@
   function updateTimeline() {
     const a = el.audio;
     const cur = a.currentTime || 0;
-    const dur = isFinite(a.duration) ? a.duration : 0;
+    const dur = isFiniteNumber(a.duration) ? a.duration : 0;
     const pct = dur ? Math.min(100, (cur / dur) * 100) : 0;
 
     el.miniBar.style.width = pct.toFixed(2) + '%';
@@ -3128,7 +3200,6 @@
   }
 
   // 用 Canvas 画一个书籍图标，兜底给 MediaSession 用（安卓通知栏没有封面时显示默认音乐符号）
-  let bookIconDataUrl = null;
   function ensureBookIcon() {
     if (bookIconDataUrl) return;
     try {
@@ -3271,6 +3342,11 @@
     }));
   }
 
+  /** 定时状态。所有字段一次性给全，避免重置时丢字段。 */
+  function sleepState(patch) {
+    return { mode: 'off', endsAt: 0, minutes: 0, pending: false, finishTrack: false, ...patch };
+  }
+
   function setSleep(mode, minutes = 0) {
     clearInterval(sleepTimer);
     clearInterval(fadeTimer);
@@ -3285,11 +3361,11 @@
         ? `${minutes} 分钟到点后，本节播完再暂停`
         : `将在 ${minutes} 分钟后暂停`);
     } else if (mode === 'chapter') {
-      state.sleep = { mode: 'chapter', endsAt: 0, minutes: 0, pending: false };
+      state.sleep = sleepState({ mode: 'chapter' });
       if (state.current) recordPauseMark('timer-start');
       toast('本章播完后自动暂停');
     } else {
-      state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+      state.sleep = sleepState();
       toast('定时已关闭');
     }
     updateTimerUI();
@@ -3317,7 +3393,7 @@
     fadeTimer = null;
 
     if (el.audio.paused) {
-      state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+      state.sleep = sleepState();
       updateTimerUI();
       toast('定时到点，当时没有在播放，已关闭');
       return;
@@ -3343,7 +3419,7 @@
         timerPausing = true;
         el.audio.pause();
         el.audio.volume = base;
-        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+        state.sleep = sleepState();
         updateTimerUI();
         toast('已按定时暂停');
       }
@@ -3425,14 +3501,12 @@
   };
 
   async function openPauseMarks(bookId) {
-    el.pausemarksSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.pausemarksSheet);
     await renderPauseMarks(bookId);
   }
 
   function closePauseMarks() {
-    el.pausemarksSheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.pausemarksSheet);
   }
 
   async function renderPauseMarks(bookId) {
@@ -3445,7 +3519,7 @@
       return;
     }
 
-    el.pausemarksList.innerHTML = '';
+    el.pausemarksList.replaceChildren();
     for (const m of marks) {
       const li = document.createElement('li');
       const item = document.createElement('button');
@@ -3499,7 +3573,7 @@
   async function clearPauseMarks(bookId) {
     const marks = await loadPauseMarks(bookId);
     if (!marks.length) return;
-    if (!confirm(`确定清空这${bookId ? '本书' : '全部'}的 ${marks.length} 条暂停记录？`)) return;
+    if (!window.confirm(`确定清空这${bookId ? '本书' : '全部'}的 ${marks.length} 条暂停记录？`)) return;
     for (const m of marks) {
       try { await dbDelete('pausemarks', m.id); } catch {}
     }
@@ -3533,8 +3607,12 @@
 
   /* ================= 设置 ================= */
 
+  /** 设置写盘做 300ms 防抖：拖音量条时不要每帧写一次 IndexedDB */
   function saveSettings() {
-    dbPut('kv', state.settings, 'settings').catch(() => {});
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(() => {
+      dbPut('kv', state.settings, 'settings').catch(ignore);
+    }, 300);
   }
 
   function applyTheme() {
@@ -3558,13 +3636,11 @@
 
   function openSheet() {
     if (!state.current) return;
-    el.sheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.sheet);
   }
 
   function closeSheet() {
-    el.sheet.hidden = true;
-    syncBodyScroll();
+    closeOverlay(el.sheet);
   }
 
   /* ================= 事件 ================= */
@@ -3579,10 +3655,10 @@
     } catch { return null; }
   }
 
+  /** 登录 / 初始化管理员弹层。mode: 'login' | 'setup' */
   function showAuth(mode, message) {
-    state.authShown = true;
-    el.authSheet.hidden = false;
     const setup = mode === 'setup';
+    state.authShown = true;
     el.authTitle.textContent = setup ? '创建管理员' : '登录听书';
     el.authHint.textContent = setup ? '第一次使用，先创建一个管理员账号。' : '用管理员或普通用户账号登录。';
     el.authSubmit.textContent = setup ? '创建并进入' : '登录';
@@ -3593,8 +3669,8 @@
     el.authPass.autocomplete = setup ? 'new-password' : 'current-password';
     el.authError.hidden = !message;
     el.authError.textContent = message || '';
-    syncBodyScroll();
-    setTimeout(() => { try { el.authUser.focus({ preventScroll: true }); } catch { /* ignore */ } }, 100);
+    openOverlay(el.authSheet);
+    setTimeout(() => { try { el.authUser.focus({ preventScroll: true }); } catch { /* 忽略聚焦失败 */ } }, 100);
   }
 
   async function submitAuth(event) {
@@ -3651,15 +3727,13 @@
     el.accountInfo.textContent =
       `当前账号：${state.user}\n角色：${isAdmin() ? '管理员' : '普通用户'}`;
     el.accountUsersBtn.hidden = !isAdmin();
-    el.accountSheet.hidden = false;
-    syncBodyScroll();
+    openOverlay(el.accountSheet);
   }
 
   async function openUsers() {
     if (!isAdmin()) return;
-    el.accountSheet.hidden = true;
-    el.usersSheet.hidden = false;
-    syncBodyScroll();
+    closeOverlay(el.accountSheet);
+    openOverlay(el.usersSheet);
     await loadUsers();
   }
 
@@ -3677,7 +3751,7 @@
   }
 
   function renderUsers() {
-    el.userList.innerHTML = '';
+    el.userList.replaceChildren();
     if (!state.users.length) {
       const p = document.createElement('p');
       p.className = 'muted tiny';
@@ -3795,29 +3869,41 @@
     location.reload();
   }
 
+  /* ================= 事件绑定 =================
+     按界面区域拆成若干 bindXxx()，便于定位；每个函数只负责自己那一块的事件。 */
+
   function bind() {
+    bindAccountEvents();
+    bindLibraryEvents();
+    bindBookEvents();
+    bindBookEditorEvents();
+    bindBackupEvents();
+    bindUploadEvents();
+    bindCollectionEvents();
+    bindPlaybackEvents();
+    bindAudioEvents();
+    bindGlobalEvents();
+  }
+
+  /* 账号 / 用户管理 / 每行本数 */
+  function bindAccountEvents() {
     el.authForm.addEventListener('submit', submitAuth);
     el.userBtn.addEventListener('click', () => {
       if (state.user) openAccount();
       else showAuth('login');
     });
-    el.accountClose.addEventListener('click', () => { el.accountSheet.hidden = true; syncBodyScroll(); });
+    el.accountClose.addEventListener('click', () => closeOverlay(el.accountSheet));
     el.accountSheet.addEventListener('click', (e) => {
-      if (e.target === el.accountSheet) { el.accountSheet.hidden = true; syncBodyScroll(); }
+      if (e.target === el.accountSheet) closeOverlay(el.accountSheet);
     });
     el.accountUsersBtn.addEventListener('click', () => { void openUsers(); });
     el.accountPasswordBtn.addEventListener('click', () => { void changePassword(); });
     el.accountLogoutBtn.addEventListener('click', () => { void logout(); });
-    el.usersClose.addEventListener('click', () => { el.usersSheet.hidden = true; syncBodyScroll(); });
+    el.usersClose.addEventListener('click', () => closeOverlay(el.usersSheet));
     el.usersSheet.addEventListener('click', (e) => {
-      if (e.target === el.usersSheet) { el.usersSheet.hidden = true; syncBodyScroll(); }
+      if (e.target === el.usersSheet) closeOverlay(el.usersSheet);
     });
     el.newUserForm.addEventListener('submit', createUser);
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && state.user) {
-        void pullServerCollections();
-      }
-    });
     el.layoutBtn.addEventListener('click', () => {
       const steps = [0, 2, 3, 4, 5];
       const i = steps.indexOf(state.columns);
@@ -3825,7 +3911,10 @@
       applyLayout();
       void saveUserLayout();
     });
+  }
 
+  /* 书架：打开书库、搜索、排序、主题、卡片点击 */
+  function bindLibraryEvents() {
     el.pickBtn.addEventListener('click', () => {
       if (state.source === 'net') openUploadSheet();
       else pickFolder();
@@ -3844,11 +3933,11 @@
     });
 
     el.themeBtn.addEventListener('click', () => {
-      const t = state.settings.theme;
-      state.settings.theme = t === 'auto' ? 'dark' : t === 'dark' ? 'light' : 'auto';
+      const i = THEMES.indexOf(state.settings.theme);
+      state.settings.theme = THEMES[(i + 1) % THEMES.length];
       applyTheme();
       saveSettings();
-      toast(state.settings.theme === 'auto' ? '跟随系统' : state.settings.theme === 'dark' ? '夜间模式' : '日间模式', 1100);
+      toast(THEME_LABELS[state.settings.theme] || THEME_LABELS.auto, 1100);
     });
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -3860,12 +3949,10 @@
       renderLibrary();
     });
 
-    const SORTS = ['recent', 'title', 'progress'];
-    const SORT_LABEL = { recent: '最近收听', title: '书名', progress: '进度' };
     el.sortBtn.addEventListener('click', () => {
       const i = SORTS.indexOf(state.settings.sort);
       state.settings.sort = SORTS[(i + 1) % SORTS.length];
-      el.sortBtn.textContent = SORT_LABEL[state.settings.sort];
+      el.sortBtn.textContent = SORT_LABELS[state.settings.sort];
       saveSettings();
       renderLibrary();
     });
@@ -3905,7 +3992,10 @@
         openBookAndPlay(book).then(openSheet);
       }
     });
+  }
 
+  /* 书籍详情：返回、播放、从头开始、简介展开 */
+  function bindBookEvents() {
     el.backBtn.addEventListener('click', goLibrary);
 
     el.bookPlayBtn.addEventListener('click', () => {
@@ -3928,8 +4018,10 @@
     el.bookDesc.addEventListener('click', () => {
       if (!el.bookDesc.hidden) el.bookDesc.classList.toggle('open');
     });
+  }
 
-    /* ---- 编辑书籍 ---- */
+  /* 编辑书籍：书名、简介、配色、封面、裁切 */
+  function bindBookEditorEvents() {
     el.editBookBtn.addEventListener('click', () => {
       if (state.bookView) openEditor(state.bookView);
     });
@@ -3976,9 +4068,10 @@
       renderEditCover();
       toast('已恢复默认封面', 1400);
     });
+  }
 
-    /* ---- 上传书籍 ---- */
-    /* ---- 进度备份 ---- */
+  /* 备份 / 暂停记录 / 版本信息 */
+  function bindBackupEvents() {
     el.backupBtn.addEventListener('click', openBackupSheet);
     el.backupClose.addEventListener('click', closeBackupSheet);
     el.backupSheet.addEventListener('click', (e) => {
@@ -4006,7 +4099,10 @@
       e.target.value = '';
       if (f) await importProgressFile(f);
     });
+  }
 
+  /* 上传书籍：文件夹 / 压缩包 / 删除，以及封面选择与裁切 */
+  function bindUploadEvents() {
     el.uploadClose.addEventListener('click', closeUploadSheet);
     el.uploadSheet.addEventListener('click', (e) => {
       if (e.target === el.uploadSheet) closeUploadSheet();
@@ -4101,8 +4197,10 @@
         drawCrop();
       }
     });
+  }
 
-    /* ---- 合集 ---- */
+  /* 合集：打开、排序、拖动、增删 */
+  function bindCollectionEvents() {
     el.newCollectionBtn.addEventListener('click', () => openCollectionEditor(null, []));
 
     el.addToCollectionBtn.addEventListener('click', () => {
@@ -4186,7 +4284,10 @@
       if (e.target === el.colEditSheet) closeCollectionEditor();
     });
     el.colPickList.addEventListener('change', updatePickCount);
+  }
 
+  /* 章节列表与播放器控制 */
+  function bindPlaybackEvents() {
     el.trackList.addEventListener('click', (e) => {
       const li = e.target.closest('.track-item');
       const book = state.bookView;
@@ -4208,9 +4309,9 @@
       }
     });
 
-    el.miniPlay.addEventListener('click', togglePlay);
-    el.miniPrev.addEventListener('click', prevTrack);
-    el.miniNext.addEventListener('click', nextTrack);
+    el.miniPlay.addEventListener('click', () => togglePlay());
+    el.miniPrev.addEventListener('click', () => prevTrack());
+    el.miniNext.addEventListener('click', () => nextTrack());
     el.expandBtn.addEventListener('click', openSheet);
     el.miniSpeed.addEventListener('click', () => {
       const i = SPEEDS.indexOf(state.settings.rate);
@@ -4261,9 +4362,10 @@
     el.volumeBar.addEventListener('input', () => {
       setVolume(parseInt(el.volumeBar.value, 10) / 100, true);
     });
+  }
 
-    /* ---- 音频事件 ---- */
-
+  /* 音频元素本身的事件 */
+  function bindAudioEvents() {
     el.audio.addEventListener('timeupdate', () => {
       updateTimeline();
       if (!el.audio.paused && Date.now() - lastSaveAt > SAVE_EVERY) saveProgress();
@@ -4285,7 +4387,7 @@
       // 否则 ended 里就看不到 pending 了（会误切下一章）。
       const atEnd = el.audio.duration > 0 && el.audio.currentTime >= el.audio.duration - 0.3;
       if (state.sleep.mode === 'time' && state.sleep.pending && !el.audio.ended && !atEnd) {
-        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+        state.sleep = sleepState();
         updateTimerUI();
       }
 
@@ -4306,7 +4408,7 @@
         clearInterval(sleepTimer);
         clearInterval(fadeTimer);
         fadeTimer = null;
-        state.sleep = { mode: 'off', endsAt: 0, minutes: 0, pending: false };
+        state.sleep = sleepState();
         el.audio.pause();
         saveProgress(true, true);
         updateTimerUI();
@@ -4348,9 +4450,10 @@
         el.audio.playbackRate = state.settings.rate;
       }
     });
+  }
 
-    /* ---- 全局 ---- */
-
+  /* 全局：浮层收起、键盘快捷键、页面可见性、滚动 */
+  function bindGlobalEvents() {
     document.addEventListener('click', (e) => {
       if (el.popover.hidden) return;
       if (el.popover.contains(e.target)) return;
@@ -4359,20 +4462,30 @@
     });
 
     document.addEventListener('keydown', (e) => {
-      const modalOpen = !el.editSheet.hidden || !el.collectionSheet.hidden
-        || !el.colEditSheet.hidden || !el.uploadSheet.hidden || !el.backupSheet.hidden;
-      if (modalOpen) {
+      // 弹层打开时只处理 Esc，且按「最上层优先」的顺序关闭
+      const stack = [
+        ['cropSheet', closeCropper],
+        ['backupSheet', closeBackupSheet],
+        ['uploadSheet', closeUploadSheet],
+        ['pausemarksSheet', closePauseMarks],
+        ['usersSheet', () => closeOverlay(el.usersSheet)],
+        ['accountSheet', () => closeOverlay(el.accountSheet)],
+        ['colEditSheet', closeCollectionEditor],
+        ['collectionSheet', closeCollection],
+        ['editSheet', closeEditor],
+        ['authSheet', null],   // 登录层不允许 Esc 关掉
+      ];
+      const opened = stack.filter(([key]) => el[key] && !el[key].hidden);
+      if (opened.length) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          if (!el.backupSheet.hidden) closeBackupSheet();
-          else if (!el.uploadSheet.hidden) closeUploadSheet();
-          else if (!el.colEditSheet.hidden) closeCollectionEditor();
-          else if (!el.collectionSheet.hidden) closeCollection();
-          else closeEditor();
+          const handler = opened[0][1];
+          if (handler) handler();
         }
         return;
       }
-      const tag = (e.target.tagName || '').toLowerCase();
+
+      const tag = e.target instanceof Element ? e.target.tagName.toLowerCase() : '';
       if (tag === 'input' || tag === 'textarea' || tag === 'select') {
         if (e.key === 'Escape') hidePopover();
         return;
@@ -4403,21 +4516,24 @@
     window.addEventListener('beforeunload', () => {
       if (state.current) { saveProgress(); beaconProgress(); }
     });
+
+    // 切后台存一次进度；回前台时补救被系统回收的音频源，顺便刷一次合集
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (state.current) saveProgress(true, true);
-      } else {
-        // 回到前台：安卓后台/锁屏可能把 blob 源回收掉。
-        // 音频没源了就用存的 blob 重建；blob 也没了就重新拉章节。
-        const a = el.audio;
-        if (!state.current) return;
-        if (!a.src && currentBlob) {
-          objectUrl = URL.createObjectURL(currentBlob);
-          a.src = objectUrl;
-          a.load();
-        } else if (!a.src && !currentBlob) {
-          reloadAndPlay();
-        }
+        return;
+      }
+      if (state.user) void pullServerCollections();
+
+      // 安卓后台/锁屏可能把 blob 源回收掉：没源了就用存的 blob 重建，blob 也没了就重新拉章节
+      const a = el.audio;
+      if (!state.current) return;
+      if (!a.src && currentBlob) {
+        objectUrl = URL.createObjectURL(currentBlob);
+        a.src = objectUrl;
+        a.load();
+      } else if (!a.src && !currentBlob) {
+        reloadAndPlay();
       }
     });
     window.addEventListener('scroll', () => {
@@ -4513,7 +4629,7 @@
     updateTimerUI();
     updatePlayState();
     document.body.classList.toggle('mini-hidden', !state.current);
-    el.sortBtn.textContent = { recent: '最近收听', title: '书名', progress: '进度' }[state.settings.sort] || '最近收听';
+    el.sortBtn.textContent = SORT_LABELS[state.settings.sort] || SORT_LABELS.recent;
     applyLayout();
 
     const auth = await fetchAuthStatus();
@@ -4521,7 +4637,6 @@
       showAuth('login', '连不上服务器，请检查地址或服务是否启动');
       return;
     }
-    state.configured = !!auth.configured;
     if (!auth.configured) {
       showAuth('setup');
       return;
