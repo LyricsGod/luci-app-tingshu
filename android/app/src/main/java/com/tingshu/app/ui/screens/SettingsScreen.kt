@@ -234,7 +234,7 @@ fun SettingsScreen(
             SectionCard("数据") {
                 InfoLine("听书记录", "${progress.values.count { it.isReal }} 本")
                 InfoLine("暂停记录", "${pauseMarks.size} 条")
-                ActionRow("进度备份 / 恢复") { showBackup = true }
+                if (isAdmin) ActionRow("服务器备份 / 恢复") { showBackup = true }
                 ActionRow("暂停记录") { showMarks = true }
             }
 

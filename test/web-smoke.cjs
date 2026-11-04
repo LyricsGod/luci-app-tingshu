@@ -124,6 +124,10 @@ const routes = {
   },
   'cgi-ts/meta': { ok: true, items: {} },
   'cgi-ts/pausemarks': { ok: true, items: [] },
+  'cgi-ts/backup': {
+    ok: true, users: ['liuyu', 'test'], booksDir: '/mnt/audiobooks', freeKb: 1024000,
+    sizes: { user: 12, users: 24, meta: 1024, media: 36657156, full: 36658192 },
+  },
   'library.json': BOOKS,
 };
 
@@ -208,6 +212,20 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
 
   click($('#backBtn'));
   check('返回书架', $('#bookView').hidden && !$('#libraryView').hidden);
+
+  /* ---- 服务器备份：管理员权限 + 5 种模式 ---- */
+  check('管理员可见备份入口', !$('#backupBtn').hidden);
+  click($('#backupBtn'));
+  check('备份弹层打开', !$('#backupSheet').hidden);
+  check('备份模式有 5 种', $$('#backupModes input[name="backupMode"]').length === 5);
+  await new Promise((r) => setTimeout(r, 20));
+  check('用户下拉已填充', $('#backupUser').options.length === 2);
+  check('显示备份体积', /预计/.test($('#backupSize').textContent));
+  const mediaRadio = $$('#backupModes input').find((i) => i.value === 'media');
+  click(mediaRadio);
+  check('切到媒体库后隐藏用户选择', $('#backupUserRow').hidden);
+  press('Escape');
+  check('Esc 关闭备份弹层', $('#backupSheet').hidden);
 
   check('没有未捕获异常', errors.length === 0);
 

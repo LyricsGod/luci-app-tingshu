@@ -481,6 +481,73 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
     /** 日志里只保留末段路径，避免把 base 和 hex id 全打出来 */
     private fun shortUrl(url: String): String = url.substringAfter("://", url).substringAfter('/', "")
 
+    /* ---------------- 服务器备份 / 恢复（仅管理员） ---------------- */
+
+    data class BackupInfo(
+        val users: List<String>,
+        val booksDir: String,
+        val freeKb: Long,
+        val sizes: Map<String, Long>,
+    )
+
+    data class BackupDownload(val url: String, val fileName: String, val headers: Map<String, String>)
+
+    private fun backupUrl(base: String, action: String, mode: String, user: String): String {
+        var q = "${base}cgi-ts/backup?action=$action&mode=${URLEncoder.encode(mode, "UTF-8")}"
+        if (mode == "user" && user.isNotBlank()) {
+            q += "&u=${URLEncoder.encode(user, "UTF-8")}"
+        }
+        return q
+    }
+
+    suspend fun backupInfo(base: String, mode: String, user: String): BackupInfo =
+        withContext(Dispatchers.IO) {
+            val o = JSONObject(request(backupUrl(base, "info", mode, user), timeoutMs = 15000))
+            if (!o.optBoolean("ok")) throw IOException(o.optString("error", "读取备份信息失败"))
+            val arr = o.optJSONArray("users") ?: JSONArray()
+            val users = (0 until arr.length())
+                .mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+            val sz = o.optJSONObject("sizes") ?: JSONObject()
+            val sizes = HashMap<String, Long>()
+            sz.keys().forEach { sizes[it] = sz.optLong(it) }
+            BackupInfo(users, o.optString("booksDir"), o.optLong("freeKb"), sizes)
+        }
+
+    /** 交给系统 DownloadManager 下载，35GB 也不会占 App 内存。 */
+    fun backupDownload(base: String, mode: String, user: String): BackupDownload {
+        val headers = HashMap<String, String>()
+        tokenProvider()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            headers["Cookie"] = "tingshu_session=$it"
+            headers["Authorization"] = "Bearer $it"
+        }
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.getDefault())
+            .format(java.util.Date())
+        return BackupDownload(backupUrl(base, "export", mode, user), "tingshu-$mode-$stamp.tar.gz", headers)
+    }
+
+    /** 流式上传备份包并恢复；不会把整个文件读进内存。 */
+    suspend fun restoreBackup(
+        base: String,
+        mode: String,
+        user: String,
+        size: Long,
+        open: () -> java.io.InputStream?,
+    ): Int = withContext(Dispatchers.IO) {
+        val conn = openConnection(backupUrl(base, "import", mode, user), "POST", 10000, 30 * 60 * 1000)
+        try {
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/gzip")
+            if (size > 0) conn.setFixedLengthStreamingMode(size) else conn.setChunkedStreamingMode(64 * 1024)
+            val input = open() ?: throw IOException("打不开备份文件")
+            input.use { src -> conn.outputStream.use { dst -> src.copyTo(dst, 64 * 1024) } }
+            val o = JSONObject(readResponse(conn))
+            if (!o.optBoolean("ok")) throw IOException(o.optString("error", "恢复失败"))
+            o.optInt("entries", 0)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     /** 从本地文件流式上传，避免把几十 MB 音频整个读进内存。 */
     private fun uploadStream(
         url: String,

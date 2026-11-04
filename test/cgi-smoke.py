@@ -45,8 +45,11 @@ def env_for(tmp: Path, auth: bool) -> dict[str, str]:
 
 
 def run(tmp: Path, script: str, *, method: str = "GET", query: str = "",
-        body: bytes = b"", auth: bool = False) -> tuple[int, bytes, bytes]:
+        body: bytes = b"", auth: bool = False,
+        extra_env: dict[str, str] | None = None) -> tuple[int, bytes, bytes]:
     env = env_for(tmp, auth)
+    if extra_env:
+        env.update(extra_env)
     env["REQUEST_METHOD"] = method
     env["QUERY_STRING"] = query
     if body:
@@ -108,6 +111,134 @@ def check(name: str, tmp: Path, script: str, *, expect_json: bool = True,
     return body
 
 
+def check_raw(name: str, tmp: Path, script: str, **kwargs) -> tuple[dict[str, str], bytes]:
+    """校验二进制（非 JSON）响应：头必须完整，body 原样返回。"""
+    code, out, err = run(tmp, script, **kwargs)
+    if code != 0:
+        failures.append(f"{name}: 退出码 {code}，stderr={err.decode('utf-8', 'replace')[:200]}")
+        return {}, b""
+    try:
+        headers, body = split_response(out)
+    except AssertionError as exc:
+        failures.append(f"{name}: {exc}")
+        return {}, b""
+    if headers.get("cache-control") != "no-store":
+        failures.append(f"{name}: 缺少 Cache-Control: no-store")
+    if not failures or failures[-1].split(":")[0] != name:
+        print(f"ok    {name}")
+    return headers, body
+
+
+def test_backup(tmp: Path) -> None:
+    """备份接口：5 种导出模式、管理员限制、恢复往返、路径白名单。"""
+    import io
+    import tarfile
+
+    root = tmp / "backuproot"
+    data, www, books, cfg = root / "data", root / "www", root / "audiobooks", root / "config"
+    for d in (data / "users" / "alice" / "progress", data / "users" / "bob",
+              data / "meta", www, books, cfg):
+        d.mkdir(parents=True, exist_ok=True)
+    (data / "users" / "alice" / "account").write_text("role=user\n")
+    (data / "users" / "bob" / "account").write_text("role=admin\n")
+    (data / "users" / "alice" / "progress" / "a.json").write_text('{"i":1}')
+    (data / "meta" / "b.json").write_text('{"title":"三体"}')
+    (www / "library.json").write_text('{"books":[]}')
+    (books / "book1.mp3").write_bytes(b"ID3fake")
+    (cfg / "tingshu").write_text("config tingshu 'main'\n")
+
+    # CGI 用 `sh` 跑：Windows 上要把 C:\... 转成 Git Bash 认识的 /c/...，
+    # 否则 DATA_REL 会拼出 /C:\...，tar -C / 找不到文件。
+    def msys(p: Path) -> str:
+        s = str(p).replace("\\", "/")
+        if len(s) > 1 and s[1] == ":":
+            s = "/" + s[0].lower() + s[2:]
+        return s
+
+    data_posix, www_posix = msys(data), msys(www)
+    books_posix, cfg_posix = msys(books), msys(cfg / "tingshu")
+    extra = {
+        "TINGSHU_DATA_DIR": data_posix,
+        "TINGSHU_WWW_DIR": www_posix,
+        "TINGSHU_BOOKS_DIR": books_posix,
+        "TINGSHU_CONFIG_FILE": cfg_posix,
+    }
+    data_rel, www_rel = data_posix.lstrip("/"), www_posix.lstrip("/")
+    books_rel, cfg_rel = books_posix.lstrip("/"), cfg_posix.lstrip("/")
+
+    def members(body: bytes) -> list[str]:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tf:
+            return tf.getnames()
+
+    info = check("GET backup info", tmp, "backup", query="action=info", extra_env=extra)
+    if info:
+        obj = json.loads(info)
+        if set(obj.get("users", [])) != {"alice", "bob"}:
+            failures.append(f"backup info: 用户列表不对 {obj.get('users')}")
+        if obj.get("sizes", {}).get("media", 0) <= 0:
+            failures.append("backup info: 媒体库体积没算出来")
+        if "freeKb" not in obj:
+            failures.append("backup info: 缺少 freeKb")
+
+    cases = [
+        ("users", [f"{data_rel}/users/alice/account", f"{data_rel}/users/bob/account"], None),
+        ("user", [f"{data_rel}/users/alice/account"], "alice"),
+        ("meta", [f"{data_rel}/meta/b.json", f"{www_rel}/library.json"], None),
+        ("media", [f"{books_rel}/book1.mp3"], None),
+        ("full", [f"{data_rel}/users/alice/account", f"{cfg_rel}", f"{books_rel}/book1.mp3"], None),
+    ]
+    exported: dict[str, bytes] = {}
+    for mode, expected, user in cases:
+        q = f"action=export&mode={mode}" + (f"&u={user}" if user else "")
+        headers, body = check_raw(f"GET backup export {mode}", tmp, "backup",
+                                  query=q, extra_env=extra)
+        if not body or not body.startswith(b"\x1f\x8b"):
+            failures.append(f"backup export {mode}: 不是 gzip 流（响应 {body[:200]!r}）")
+            continue
+        if not headers.get("content-type", "").startswith("application/gzip"):
+            failures.append(f"backup export {mode}: Content-Type 不对")
+        names = members(body)
+        for want in expected:
+            if want not in names:
+                failures.append(f"backup export {mode}: 包里缺少 {want}（{names[:6]}）")
+        if mode == "user" and any("users/bob" in n for n in names):
+            failures.append("backup export user: 误打包了别的用户")
+        exported[mode] = body
+
+    check("GET backup 非法 mode", tmp, "backup",
+          query="action=export&mode=../../etc", extra_env=extra, expect_status=400)
+    check("GET backup 缺 mode", tmp, "backup",
+          query="action=export", extra_env=extra, expect_status=400)
+    check("GET backup 非法用户名", tmp, "backup",
+          query="action=export&mode=user&u=..%2Fetc", extra_env=extra, expect_status=400)
+    check("GET backup 未登录", tmp, "backup",
+          query="action=info", extra_env=extra, auth=True, expect_status=401)
+
+    # 恢复往返：先删掉一个文件，再用导出的包写回来
+    target = data / "users" / "alice" / "account"
+    target.unlink()
+    payload = exported.get("users", b"")
+    if payload:
+        check("POST backup import 往返", tmp, "backup", method="POST",
+              query="action=import&mode=users", body=payload, extra_env=extra)
+        if not target.exists() or "role=user" not in target.read_text():
+            failures.append("backup import: 恢复后文件没回来")
+
+    # 恶意包：包含不在白名单里的绝对路径镜像，必须拒绝
+    bad = io.BytesIO()
+    with tarfile.open(fileobj=bad, mode="w:gz") as tf:
+        blob = b"evil"
+        ti = tarfile.TarInfo("etc/passwd")
+        ti.size = len(blob)
+        tf.addfile(ti, io.BytesIO(blob))
+    check("POST backup 拒绝越界路径", tmp, "backup", method="POST",
+          query="action=import&mode=users", body=bad.getvalue(),
+          extra_env=extra, expect_status=400)
+    check("POST backup 拒绝坏包", tmp, "backup", method="POST",
+          query="action=import&mode=users", body=b"not a tar.gz",
+          extra_env=extra, expect_status=400)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="tingshu-cgi-"))
     try:
@@ -155,6 +286,9 @@ def main() -> int:
 
         # ---- 登录接口本身 ----
         check("GET auth status", tmp, "auth", query="action=status")
+
+        # ---- 备份 / 恢复 ----
+        test_backup(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -180,6 +180,7 @@ fun LibraryScreen(
                 },
                 onUpload = { showUpload = true },
                 canUpload = isAdmin,
+                canBackup = isAdmin,
                 onSettings = onOpenSettings,
                 menuOpen = menuOpen,
                 onMenuOpenChange = { menuOpen = it },
@@ -347,6 +348,7 @@ private fun LibraryHeader(
     onSearch: () -> Unit,
     onUpload: () -> Unit,
     canUpload: Boolean,
+    canBackup: Boolean,
     onSettings: () -> Unit,
     menuOpen: Boolean,
     onMenuOpenChange: (Boolean) -> Unit,
@@ -402,13 +404,15 @@ private fun LibraryHeader(
                         onMenuOpenChange(false)
                     },
                 )
-                DropdownMenuItem(
-                    text = { Text("进度备份 / 恢复") },
-                    onClick = {
-                        onBackup()
-                        onMenuOpenChange(false)
-                    },
-                )
+                if (canBackup) {
+                    DropdownMenuItem(
+                        text = { Text("服务器备份 / 恢复") },
+                        onClick = {
+                            onBackup()
+                            onMenuOpenChange(false)
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("暂停记录") },
                     onClick = {

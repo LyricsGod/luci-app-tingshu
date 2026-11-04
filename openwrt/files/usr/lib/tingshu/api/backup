@@ -1,0 +1,194 @@
+#!/bin/sh
+#
+# 听书 · 备份 / 恢复接口（uhttpd CGI，仅管理员）
+#
+#   GET  ?action=info                        用户列表、各模式体积、磁盘余量
+#   GET  ?action=export&mode=..&u=..         流式 tar.gz，不落盘
+#   POST ?action=import&mode=..&u=..         上传备份包，校验路径后恢复
+#
+# mode:
+#   user   指定用户数据      users  所有用户数据
+#   meta   书籍元数据        media  媒体库（所有音频）
+#   full   全量（以上全部 + UCI 配置，用于重装/迁移）
+#
+# 包内路径是「去掉前导 / 的绝对路径镜像」（etc/tingshu/...、mnt/...），
+# 导出用 tar -C / -T 列表直接流向客户端，35GB 媒体库也不会占 /tmp；
+# 恢复时同一份包 tar -C / 写回原位置。恢复前会逐条校验路径白名单。
+#
+
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
+ts_require_admin
+
+DATA_DIR="${TINGSHU_DATA_DIR:-/etc/tingshu}"
+WWW_DIR="${TINGSHU_WWW_DIR:-/tmp/tingshu/www}"
+CONFIG_FILE="${TINGSHU_CONFIG_FILE:-/etc/config/tingshu}"
+BOOKS_DIR="${TINGSHU_BOOKS_DIR:-}"
+
+if [ -z "$BOOKS_DIR" ]; then
+	if [ -f /lib/functions.sh ] && [ -f "$CONFIG_FILE" ]; then
+		. /lib/functions.sh
+		config_load tingshu
+		config_get BOOKS_DIR main books_dir /mnt/audiobooks
+	else
+		BOOKS_DIR=/mnt/audiobooks
+	fi
+fi
+
+DATA_REL="${DATA_DIR#/}"
+WWW_REL="${WWW_DIR#/}"
+CONFIG_REL="${CONFIG_FILE#/}"
+BOOKS_REL="${BOOKS_DIR#/}"
+
+action="$(ts_param "${QUERY_STRING:-}" action)"
+mode="$(ts_param "${QUERY_STRING:-}" mode)"
+user="$(ts_urldecode "$(ts_param "${QUERY_STRING:-}" u)")"
+
+[ -n "$action" ] || ts_fail 400 "no action"
+case "$mode" in
+	user|users|meta|media|full|'') ;;
+	*) ts_fail 400 "bad mode" ;;
+esac
+
+# 用户名只允许安全字符，杜绝 ../ 之类的路径穿越
+safe_user() {
+	[ -n "$1" ] || return 1
+	case "$1" in *[!A-Za-z0-9_.-]*) return 1 ;; esac
+	case "$1" in .|..|.*) return 1 ;; esac
+	return 0
+}
+
+kb_of() {
+	[ -e "$1" ] || { printf '0'; return 0; }
+	du -sk "$1" 2>/dev/null | cut -f1
+}
+
+# 把本次要打包的相对路径写进 $1，每行一条，只收确实存在的
+build_list() {
+	local out p
+	out="$1"
+	: > "$out" || return 1
+	case "$mode" in
+		user)
+			safe_user "$user" || return 2
+			p="$DATA_REL/users/$user"
+			[ -d "/$p" ] || return 3
+			printf '%s\n' "$p" >> "$out"
+			;;
+		users)
+			p="$DATA_REL/users"
+			[ -d "/$p" ] && printf '%s\n' "$p" >> "$out"
+			;;
+		meta)
+			for p in "$DATA_REL/meta" "$DATA_REL/progress" \
+				"$DATA_REL/collections.json" "$DATA_REL/pausemarks.json" \
+				"$WWW_REL/library.json"; do
+				[ -e "/$p" ] && printf '%s\n' "$p" >> "$out"
+			done
+			;;
+		media)
+			p="$BOOKS_REL"
+			[ -d "/$p" ] && printf '%s\n' "$p" >> "$out"
+			;;
+		full)
+			for p in "$DATA_REL" "$WWW_REL/library.json" "$CONFIG_REL" "$BOOKS_REL"; do
+				[ -e "/$p" ] && printf '%s\n' "$p" >> "$out"
+			done
+			;;
+	esac
+	return 0
+}
+
+case "$action" in
+
+info)
+	users_json=""
+	for d in "$DATA_DIR"/users/*; do
+		[ -f "$d/account" ] || continue
+		n="${d##*/}"
+		[ -n "$users_json" ] && users_json="$users_json,"
+		users_json="$users_json\"$(ts_json_escape "$n")\""
+	done
+
+	user_kb=0
+	if [ "$mode" = "user" ] && safe_user "$user"; then
+		user_kb=$(kb_of "$DATA_DIR/users/$user")
+	fi
+	users_kb=$(kb_of "$DATA_DIR/users")
+	meta_kb=0
+	for f in "$DATA_DIR/meta" "$DATA_DIR/progress" \
+		"$DATA_DIR/collections.json" "$DATA_DIR/pausemarks.json" \
+		"$WWW_DIR/library.json"; do
+		[ -e "$f" ] && meta_kb=$(( meta_kb + $(kb_of "$f") ))
+	done
+	media_kb=$(kb_of "$BOOKS_DIR")
+	full_kb=$(( users_kb + meta_kb + media_kb + $(kb_of "$CONFIG_FILE") ))
+	free_kb=$(df -k "$BOOKS_DIR" 2>/dev/null | tail -n 1 | awk '{print $4}')
+	case "$free_kb" in ''|*[!0-9]*) free_kb=0 ;; esac
+
+	ts_ok ",\"users\":[$users_json],\"booksDir\":\"$(ts_json_escape "$BOOKS_DIR")\",\"freeKb\":$free_kb,\"sizes\":{\"user\":$user_kb,\"users\":$users_kb,\"meta\":$meta_kb,\"media\":$media_kb,\"full\":$full_kb}"
+	;;
+
+export)
+	[ -n "$mode" ] || ts_fail 400 "no mode"
+	[ -d "$BOOKS_DIR" ] || ts_fail 400 "books dir missing"
+
+	STAGE=$(mktemp -d /tmp/tsbak.XXXXXX) || ts_fail 500 "tmpdir failed"
+	trap 'rm -rf "$STAGE"' EXIT INT TERM
+
+	build_list "$STAGE/files" || ts_fail 400 "bad user or nothing to back up"
+	[ -s "$STAGE/files" ] || ts_fail 404 "nothing to back up"
+
+	stamp=$(date +%Y%m%d-%H%M%S)
+	printf 'Content-Type: application/gzip\r\n'
+	printf 'Content-Disposition: attachment; filename="tingshu-%s-%s.tar.gz"\r\n' "$mode" "$stamp"
+	printf 'Cache-Control: no-store\r\n'
+	printf 'X-Content-Type-Options: nosniff\r\n'
+	printf 'X-Tingshu-Backup-Mode: %s\r\n' "$mode"
+	printf 'X-Tingshu-Backup-User: %s\r\n' "$(ts_json_escape "$user")"
+	printf 'X-Tingshu-Backup-BooksDir: %s\r\n' "$(ts_json_escape "$BOOKS_DIR")"
+	printf '\r\n'
+
+	# -C / 让列表里的相对路径落到真实位置；tar 直接写 stdout，不产生临时压缩包。
+	tar -czf - -C / -T "$STAGE/files" 2>/dev/null
+	exit 0
+	;;
+
+import)
+	[ -n "$mode" ] || ts_fail 400 "no mode"
+	[ -d "$BOOKS_DIR" ] || ts_fail 400 "books dir missing"
+
+	# 备份包可能很大，落在书库同盘（/tmp 是 tmpfs，放不下 35GB）
+	tmp_base="$BOOKS_DIR"
+	[ -w "$tmp_base" ] || tmp_base=/tmp
+	tmp="$tmp_base/.tingshu-restore.$$.tar.gz"
+	STAGE=$(mktemp -d /tmp/tsimp.XXXXXX) || ts_fail 500 "tmpdir failed"
+	trap 'rm -rf "$STAGE"; rm -f "$tmp"' EXIT INT TERM
+
+	cat > "$tmp" 2>/dev/null || ts_fail 500 "upload failed"
+	len="${CONTENT_LENGTH:-0}"
+	ts_is_uint "$len" || len=0
+	if [ "$len" -gt 0 ]; then
+		have=$(wc -c < "$tmp" 2>/dev/null | tr -d ' ')
+		[ "$have" = "$len" ] || ts_fail 400 "incomplete upload"
+	fi
+
+	tar -tzf "$tmp" > "$STAGE/list" 2>/dev/null || ts_fail 400 "bad archive"
+	[ -s "$STAGE/list" ] || ts_fail 400 "empty archive"
+
+	# 逐条校验：只允许写回听书自己的数据目录、配置和书库，拒绝 .. 与绝对路径
+	while IFS= read -r p; do
+		p="${p%/}"
+		case "/$p/" in */../*|*//*) ts_fail 400 "unsafe path" ;; esac
+		case "$p" in
+			"$DATA_REL"|"$DATA_REL"/*|"$WWW_REL"/library.json|"$CONFIG_REL"|"$BOOKS_REL"|"$BOOKS_REL"/*) ;;
+			*) ts_fail 400 "path not allowed: $p" ;;
+		esac
+	done < "$STAGE/list"
+
+	tar -xzf "$tmp" -C / 2>/dev/null || ts_fail 500 "restore failed"
+	[ -f "$WWW_DIR/library.json" ] && chmod 644 "$WWW_DIR/library.json" 2>/dev/null
+	ts_ok ",\"restored\":true,\"entries\":$(wc -l < "$STAGE/list" | tr -d ' ')"
+	;;
+
+*) ts_fail 400 "unknown action" ;;
+esac

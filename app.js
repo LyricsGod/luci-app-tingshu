@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.5.8';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.5.9';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -147,6 +147,13 @@
     backupBtn: $('#backupBtn'),
     brand: $('.brand'),
     backupInfo: $('#backupInfo'),
+    backupModes: $('#backupModes'),
+    backupUserRow: $('#backupUserRow'),
+    backupUser: $('#backupUser'),
+    backupSize: $('#backupSize'),
+    backupDownloadBtn: $('#backupDownloadBtn'),
+    backupRestoreBtn: $('#backupRestoreBtn'),
+    backupFile: $('#backupFile'),
     exportBtn: $('#exportBtn'),
     importBtn: $('#importBtn'),
     progressFileInput: $('#progressFileInput'),
@@ -334,6 +341,7 @@
   const AUTH_API = 'cgi-ts/auth';
   const USERS_API = 'cgi-ts/users';
   const LAYOUT_API = 'cgi-ts/layout';
+  const BACKUP_API = 'cgi-ts/backup';
   const nativeFetch = window.fetch.bind(window);
 
   /**
@@ -2158,6 +2166,133 @@
     }
   }
 
+  /* ================= 服务器备份 / 恢复（仅管理员） ================= */
+
+  const BACKUP_LABELS = {
+    user: '指定用户数据', users: '所有用户数据', meta: '数据库',
+    media: '媒体库', full: '全量备份',
+  };
+
+  let backupMode = 'user';
+  let backupMeta = null;
+
+  function fmtSize(kb) {
+    if (!Number.isFinite(kb) || kb <= 0) return '0 B';
+    if (kb >= 1024 * 1024) return (kb / 1024 / 1024).toFixed(2) + ' GB';
+    if (kb >= 1024) return (kb / 1024).toFixed(1) + ' MB';
+    return kb + ' KB';
+  }
+
+  function backupQuery(action) {
+    let q = BACKUP_API + '?action=' + action + '&mode=' + encodeURIComponent(backupMode);
+    if (backupMode === 'user' && el.backupUser.value) {
+      q += '&u=' + encodeURIComponent(el.backupUser.value);
+    }
+    return q;
+  }
+
+  function updateBackupSize() {
+    if (!backupMeta || !el.backupSize) return;
+    const kb = (backupMeta.sizes || {})[backupMode] || 0;
+    let text = '「' + (BACKUP_LABELS[backupMode] || backupMode) + '」预计 ' + fmtSize(kb);
+    if (backupMeta.freeKb) text += ' · 路由器可用空间 ' + fmtSize(backupMeta.freeKb);
+    if (backupMode === 'media' || backupMode === 'full') {
+      text += '。包含音频，下载时间会很长，建议用电脑操作。';
+    }
+    el.backupSize.textContent = text;
+  }
+
+  function syncBackupModeUI() {
+    el.backupUserRow.hidden = backupMode !== 'user';
+    el.backupModes.querySelectorAll('.backup-mode').forEach(node => {
+      const input = node.querySelector('input');
+      node.classList.toggle('on', !!(input && input.checked));
+    });
+    updateBackupSize();
+  }
+
+  async function loadBackupInfo() {
+    if (state.source !== 'net') {
+      el.backupSize.textContent = '没连上书库服务，服务器备份不可用。';
+      el.backupDownloadBtn.disabled = true;
+      el.backupRestoreBtn.disabled = true;
+      return;
+    }
+    try {
+      const res = await fetch(backupQuery('info'));
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || '读取失败');
+      backupMeta = data;
+
+      const prev = el.backupUser.value;
+      el.backupUser.replaceChildren();
+      (data.users || []).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u;
+        opt.textContent = u;
+        el.backupUser.appendChild(opt);
+      });
+      if (prev && (data.users || []).includes(prev)) el.backupUser.value = prev;
+
+      updateBackupSize();
+      el.backupDownloadBtn.disabled = false;
+      el.backupRestoreBtn.disabled = false;
+    } catch (e) {
+      backupMeta = null;
+      el.backupSize.textContent = '读取备份信息失败：' + (e.message || e);
+      el.backupDownloadBtn.disabled = true;
+      el.backupRestoreBtn.disabled = true;
+    }
+  }
+
+  function downloadServerBackup() {
+    if (!isAdmin()) { toast('只有管理员可以备份'); return; }
+    if (backupMode === 'user' && !el.backupUser.value) { toast('请先选择用户'); return; }
+    const a = document.createElement('a');
+    a.href = backupQuery('export');
+    a.download = '';   // 文件名由服务端的 Content-Disposition 决定
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('开始下载备份：' + BACKUP_LABELS[backupMode], 2600);
+  }
+
+  async function restoreServerBackup(file) {
+    if (!file) return;
+    if (!/\.(tar\.gz|tgz)$/i.test(file.name)) {
+      toast('请选择 tar.gz 备份包', 3000);
+      el.backupFile.value = '';
+      return;
+    }
+    const label = BACKUP_LABELS[backupMode] || backupMode;
+    const withMedia = backupMode === 'media' || backupMode === 'full';
+    if (!window.confirm(
+      '确定从「' + file.name + '」恢复吗？\n\n' +
+      '恢复会直接覆盖路由器上同名的数据' + (withMedia ? '与媒体文件' : '') +
+      '，不会删除备份包里没有的文件。\n当前模式：' + label + '。'
+    )) {
+      el.backupFile.value = '';
+      return;
+    }
+
+    toast('正在上传并恢复，请勿关闭页面…', 4000);
+    try {
+      const res = await fetch(backupQuery('import'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/gzip' },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      toast('恢复完成，共 ' + (data.entries || 0) + ' 个条目', 3200);
+      closeBackupSheet();
+    } catch (e) {
+      toast('恢复失败：' + (e.message || e), 4200);
+    } finally {
+      el.backupFile.value = '';
+    }
+  }
+
   /* ================= 进度导出 / 导入 ================= */
 
   function downloadBlob(blob, name) {
@@ -2189,8 +2324,11 @@
   }
 
   function openBackupSheet() {
+    if (!isAdmin()) { toast('只有管理员可以备份'); return; }
     updateBackupInfo();
+    syncBackupModeUI();
     openOverlay(el.backupSheet);
+    loadBackupInfo();
   }
 
   function closeBackupSheet() {
@@ -3719,6 +3857,7 @@
     if (el.editBookBtn) el.editBookBtn.hidden = !admin;
     if (el.bookDeleteBtn) el.bookDeleteBtn.hidden = !admin;
     if (el.accountUsersBtn) el.accountUsersBtn.hidden = !admin;
+    if (el.backupBtn) el.backupBtn.hidden = !admin;
     if (el.userLabel) el.userLabel.textContent = state.user || '登录';
     document.body.classList.toggle('is-admin', admin);
     document.body.classList.toggle('is-user', !admin);
@@ -4078,6 +4217,21 @@
     el.backupClose.addEventListener('click', closeBackupSheet);
     el.backupSheet.addEventListener('click', (e) => {
       if (e.target === el.backupSheet) closeBackupSheet();
+    });
+
+    /* ---- 服务器备份：模式 / 用户 / 下载 / 恢复 ---- */
+    el.backupModes.addEventListener('change', (e) => {
+      if (!e.target || e.target.name !== 'backupMode') return;
+      backupMode = e.target.value;
+      syncBackupModeUI();
+      if (backupMode === 'user') loadBackupInfo();
+    });
+    el.backupUser.addEventListener('change', () => loadBackupInfo());
+    el.backupDownloadBtn.addEventListener('click', downloadServerBackup);
+    el.backupRestoreBtn.addEventListener('click', () => el.backupFile.click());
+    el.backupFile.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) restoreServerBackup(f);
     });
 
     /* ---- 定时暂停记录 ---- */

@@ -404,32 +404,66 @@
 <div id="backupSheet" class="modal" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="backupHeading">
     <header class="modal-head">
-      <h3 id="backupHeading">进度备份</h3>
+      <h3 id="backupHeading">服务器备份</h3>
       <button id="backupClose" class="icon-btn" title="关闭" aria-label="关闭">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
     </header>
 
     <div class="modal-body">
-      <p id="backupInfo" class="backup-note muted tiny">—</p>
+      <p class="backup-note muted tiny">
+        仅管理员可用。备份包是 tar.gz，按所选范围打包路由器上的真实文件，流式下载、不在服务器上留副本。
+      </p>
 
-      <div class="upload-pick">
-        <button id="exportBtn" class="upload-card" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5M8 11l4 4 4-4M5 18.5h14"/></svg>
-          <b>导出进度</b>
-          <span class="tiny">存成一个 JSON 文件</span>
-        </button>
-        <button id="importBtn" class="upload-card" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5V10M8 13.5l4-4 4 4M5 5.5h14"/></svg>
-          <b>导入进度</b>
-          <span class="tiny">从备份文件恢复</span>
-        </button>
+      <div id="backupModes" class="backup-modes" role="radiogroup" aria-label="备份范围">
+        <label class="backup-mode on"><input type="radio" name="backupMode" value="user" checked>
+          <span><b>指定用户数据</b><small>只打包选中账号的进度、合集、暂停记录</small></span></label>
+        <label class="backup-mode"><input type="radio" name="backupMode" value="users">
+          <span><b>所有用户数据</b><small>全部账号，不含书籍元数据与音频</small></span></label>
+        <label class="backup-mode"><input type="radio" name="backupMode" value="meta">
+          <span><b>数据库</b><small>书名、简介、封面、合集与书库索引</small></span></label>
+        <label class="backup-mode"><input type="radio" name="backupMode" value="media">
+          <span><b>媒体库</b><small>书库里的全部音频与封面文件，体积很大</small></span></label>
+        <label class="backup-mode"><input type="radio" name="backupMode" value="full">
+          <span><b>全量备份</b><small>以上全部 + 服务配置，用于重装系统或迁移</small></span></label>
       </div>
 
-      <p class="muted tiny upload-tip">
-        进度平时存在路由器上，各端自动同步。这个文件用于整体搬家：换路由器、重装系统、或者留个存档。
-        导入时同一本书取较新的那份，不会把新的覆盖成旧的。
-      </p>
+      <label id="backupUserRow" class="field-row">
+        <span class="muted tiny">用户</span>
+        <select id="backupUser" aria-label="选择要备份的用户"></select>
+      </label>
+
+      <p id="backupSize" class="backup-note muted tiny">正在读取备份信息…</p>
+
+      <div class="upload-pick">
+        <button id="backupDownloadBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10.5M8 11l4 4 4-4M5 18.5h14"/></svg>
+          <b>下载备份</b>
+          <span class="tiny">按上面选的范围打包</span>
+        </button>
+        <button id="backupRestoreBtn" class="upload-card" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5V10M8 13.5l4-4 4 4M5 5.5h14"/></svg>
+          <b>从备份恢复</b>
+          <span class="tiny">上传 tar.gz 覆盖写回</span>
+        </button>
+      </div>
+      <input id="backupFile" type="file" accept=".tar.gz,.tgz,application/gzip" hidden>
+
+      <div class="backup-legacy">
+        <p id="backupInfo" class="backup-note muted tiny">—</p>
+        <div class="upload-pick">
+          <button id="exportBtn" class="upload-card" type="button">
+            <b>仅导出进度</b><span class="tiny">存成一个 JSON</span>
+          </button>
+          <button id="importBtn" class="upload-card" type="button">
+            <b>仅导入进度</b><span class="tiny">按较新的记录合并</span>
+          </button>
+        </div>
+        <p class="muted tiny upload-tip">
+          进度平时自动同步，这个 JSON 只留个存档；导入时同一本书取较新的那份，不会把新的覆盖成旧的。
+          恢复完整备份会直接覆盖服务器上的同名文件，请先确认备份包来源。
+        </p>
+      </div>
     </div>
   </div>
 </div>

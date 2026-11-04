@@ -1,10 +1,13 @@
 package com.tingshu.app.ui
 
 import android.app.Application
+import android.app.DownloadManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -95,6 +98,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val rescanning = MutableStateFlow(false)
     val sleep = MutableStateFlow(SleepState())
     val uploadState = MutableStateFlow<UploadState>(UploadState.Idle)
+    val backupInfo = MutableStateFlow<TingshuApi.BackupInfo?>(null)
+    val backupBusy = MutableStateFlow(false)
 
     val needsLogin = MutableStateFlow(prefs.authToken.isBlank())
     val authUser = MutableStateFlow(prefs.authUser)
@@ -1099,6 +1104,75 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             temp.outputStream().use { output -> source.copyTo(output, 64 * 1024) }
         }
         return temp
+    }
+
+    /* ---------------- 服务器备份（仅管理员） ---------------- */
+
+    fun loadBackupInfo(mode: String, user: String) {
+        val base = serverUrl.value
+        if (base.isBlank() || !isAdmin) {
+            backupInfo.value = null
+            return
+        }
+        viewModelScope.launch {
+            try {
+                backupInfo.value = withContext(Dispatchers.IO) { api.backupInfo(base, mode, user) }
+            } catch (t: Throwable) {
+                backupInfo.value = null
+                messages.tryEmit("读取备份信息失败：${t.message ?: "请检查网络"}")
+            }
+        }
+    }
+
+    /** 用系统 DownloadManager 下载：媒体库几十 GB 也不会把 App 压垮。 */
+    fun downloadBackup(mode: String, user: String): Boolean {
+        if (!isAdmin) {
+            messages.tryEmit("只有管理员可以备份")
+            return false
+        }
+        val base = serverUrl.value
+        if (base.isBlank()) {
+            messages.tryEmit("还没连接服务器")
+            return false
+        }
+        val d = api.backupDownload(base, mode, user)
+        val app = getApplication<Application>()
+        val dm = app.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return false
+        val req = DownloadManager.Request(Uri.parse(d.url)).apply {
+            d.headers.forEach { (k, v) -> addRequestHeader(k, v) }
+            setTitle("听书备份：$mode")
+            setDescription(d.fileName)
+            setMimeType("application/gzip")
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, d.fileName)
+        }
+        dm.enqueue(req)
+        messages.tryEmit("已开始下载备份，完成后到「下载」目录查看")
+        return true
+    }
+
+    fun restoreBackup(mode: String, user: String, uri: Uri, size: Long) {
+        if (!isAdmin) {
+            messages.tryEmit("只有管理员可以恢复备份")
+            return
+        }
+        val base = serverUrl.value
+        if (base.isBlank()) {
+            messages.tryEmit("还没连接服务器")
+            return
+        }
+        viewModelScope.launch {
+            backupBusy.value = true
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val n = api.restoreBackup(base, mode, user, size) { resolver.openInputStream(uri) }
+                messages.tryEmit("恢复完成，共 $n 个条目")
+            } catch (t: Throwable) {
+                messages.tryEmit("恢复失败：${t.message ?: "请检查备份包"}")
+            } finally {
+                backupBusy.value = false
+            }
+        }
     }
 
     /* ---------------- 进度备份 ---------------- */

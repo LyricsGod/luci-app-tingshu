@@ -130,6 +130,7 @@ LuCI → 服务 → 听书：
 | `cgi-ts/collections` | GET / POST | 整个合集列表读写 |
 | `cgi-ts/pausemarks` | GET / POST | 整个暂停记录列表读写 |
 | `cgi-ts/manage` | POST | `upload` / `archive` / `delete` / `rescan`（管理员） |
+| `cgi-ts/backup` | GET / POST | `info` / `export` / `import`（管理员，见下） |
 
 书籍 id 统一用 `net:<文件夹名>`，同步接口里传它的 UTF-8 十六进制（如 `net:三体` → `6e65743ae4b889e4bd93`），服务端只接受 `[0-9a-f]`，天然免疫路径穿越。
 
@@ -145,6 +146,33 @@ LuCI → 服务 → 听书：
 | 登录会话 | `/tmp/tingshu-sessions/<token>` | 失效，需重新登录 |
 
 `/etc/tingshu` 在 overlay 上，升级固件前记得备份；进度也可以在网页顶栏的下载图标里导出成 JSON。
+
+## 服务器备份
+
+网页端顶栏「备份」与安卓 App 的「服务器备份 / 恢复」**仅管理员可见可用**，服务端 `cgi-ts/backup` 同样会校验角色（普通用户 403）。
+
+| 模式 | 内容 |
+|---|---|
+| `user` | 指定用户的数据（进度、合集、暂停记录、布局），需传 `&u=<用户名>` |
+| `users` | 所有用户数据 |
+| `meta` | 数据库：书名 / 简介 / 封面、全局合集与暂停记录、`library.json` |
+| `media` | 媒体库：书架目录下的全部音频与封面 |
+| `full` | 以上全部 + `/etc/config/tingshu`，用于重装系统或迁移 |
+
+接口：
+
+- `GET cgi-ts/backup?action=info[&mode=&u=]` — 用户列表、各模式预计体积、磁盘余量
+- `GET cgi-ts/backup?action=export&mode=<模式>[&u=]` — 流式 `tar.gz` 下载，**不落盘**（媒体库几十 GB 也能导出）
+- `POST cgi-ts/backup?action=import&mode=<模式>` — 上传备份包恢复
+
+备份包里是「去掉前导 `/` 的绝对路径镜像」（`etc/tingshu/...`、`mnt/.../audiobooks/...`），因此也能直接在路由器上手工恢复：
+
+```sh
+tar -xzf tingshu-full-*.tar.gz -C /
+/etc/init.d/tingshu restart
+```
+
+恢复会覆盖同名文件，不会删除备份包里没有的文件；接口在解压前会逐条校验路径，只允许写回听书自己的数据目录、配置和书库。含媒体的备份体积很大，建议在电脑上操作：网页端走浏览器原生下载，安卓端交给系统下载管理器，完成后到「下载」目录查看。
 
 ## 开发
 

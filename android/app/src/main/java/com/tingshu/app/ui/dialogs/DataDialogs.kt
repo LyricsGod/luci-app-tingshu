@@ -30,6 +30,9 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,9 +41,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -208,47 +213,173 @@ private fun UploadCard(
     }
 }
 
-/** 进度备份：导出 / 导入 JSON，格式和网页端一致。 */
+private val BACKUP_MODES = listOf(
+    "user" to "指定用户数据",
+    "users" to "所有用户数据",
+    "meta" to "数据库",
+    "media" to "媒体库",
+    "full" to "全量备份",
+)
+
+private fun formatKb(kb: Long): String = when {
+    kb >= 1024L * 1024L -> String.format(Locale.US, "%.2f GB", kb / 1024f / 1024f)
+    kb >= 1024L -> String.format(Locale.US, "%.1f MB", kb / 1024f)
+    else -> "$kb KB"
+}
+
+private fun uriSize(context: Context, uri: Uri): Long = runCatching {
+    context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+        val idx = c.getColumnIndex(OpenableColumns.SIZE)
+        if (c.moveToFirst() && idx >= 0 && !c.isNull(idx)) c.getLong(idx) else 0L
+    } ?: 0L
+}.getOrDefault(0L)
+
+/** 服务器备份（仅管理员）：5 种范围 + 下载 / 恢复，另保留进度 JSON 导入导出。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BackupDialog(vm: TingshuViewModel, onDismiss: () -> Unit) {
+    val context = LocalContext.current
     val progress by vm.progress.collectAsStateWithLifecycle()
+    val info by vm.backupInfo.collectAsStateWithLifecycle()
+    val busy by vm.backupBusy.collectAsStateWithLifecycle()
     val count = progress.values.count { it.isReal }
+
+    var mode by rememberSaveable { mutableStateOf("user") }
+    var user by rememberSaveable { mutableStateOf("") }
+    var pendingRestore by remember { mutableStateOf<Uri?>(null) }
 
     val createFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) vm.exportProgress(uri)
     }
-    val openFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val openProgress = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importProgress(uri)
     }
+    val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) pendingRestore = uri
+    }
 
-    TingshuDialog(title = "进度备份", onDismiss = onDismiss) {
-        Text(
-            text = if (count > 0) "当前有 $count 本书留下了听书记录，可以导出存档。" else "还没有任何听书记录，先听一段再回来导出。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            UploadCard(
-                title = "导出进度",
-                subtitle = "存成一个 JSON 文件",
-                icon = Icons.Rounded.Download,
-                enabled = count > 0,
-                modifier = Modifier.weight(1f),
-            ) { createFile.launch(ProgressBackup.fileName()) }
-            UploadCard(
-                title = "导入进度",
-                subtitle = "从备份文件恢复",
-                icon = Icons.Rounded.Upload,
-                enabled = true,
-                modifier = Modifier.weight(1f),
-            ) { openFile.launch(arrayOf("*/*")) }
+    val effectiveUser = if (mode == "user") user else ""
+    LaunchedEffect(mode, effectiveUser) { vm.loadBackupInfo(mode, effectiveUser) }
+    LaunchedEffect(info?.users) {
+        val names = info?.users.orEmpty()
+        if (user.isBlank() || (names.isNotEmpty() && user !in names)) user = names.firstOrNull().orEmpty()
+    }
+
+    TingshuDialog(title = "服务器备份", onDismiss = onDismiss) {
+        if (!vm.isAdmin) {
+            Text("只有管理员可以备份或恢复服务器数据。", color = MaterialTheme.colorScheme.error)
+        } else {
+            Text(
+                text = "按范围打包路由器上的真实文件，流式下载、不在服务器留副本。恢复会覆盖同名文件。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                BACKUP_MODES.chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { (key, label) ->
+                            FilterChip(
+                                selected = mode == key,
+                                onClick = { mode = key },
+                                label = { Text(label, maxLines = 1) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+
+            if (mode == "user") {
+                Spacer(Modifier.height(10.dp))
+                Text("选择用户", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    info?.users.orEmpty().forEach { u ->
+                        FilterChip(selected = user == u, onClick = { user = u }, label = { Text(u) })
+                    }
+                    if (info?.users.isNullOrEmpty()) {
+                        Text("读取中…", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            val kb = info?.sizes?.get(mode) ?: 0L
+            val free = info?.freeKb ?: 0L
+            Text(
+                text = "预计 ${formatKb(kb)}" +
+                    (if (free > 0) " · 路由器可用 ${formatKb(free)}" else "") +
+                    if (mode == "media" || mode == "full") "。含音频，建议用电脑下载。" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.downloadBackup(mode, effectiveUser) },
+                    enabled = !busy && (mode != "user" || user.isNotBlank()),
+                    modifier = Modifier.weight(1f),
+                ) { Text("下载备份") }
+                Button(
+                    onClick = { openBackup.launch(arrayOf("*/*")) },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) { Text("从备份恢复") }
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 14.dp))
+            Text(
+                text = if (count > 0) "另有 $count 本书的进度可单独导出 JSON。" else "还没有听书记录。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                UploadCard(
+                    title = "导出进度", subtitle = "存成 JSON",
+                    icon = Icons.Rounded.Download, enabled = count > 0,
+                    modifier = Modifier.weight(1f),
+                ) { createFile.launch(ProgressBackup.fileName()) }
+                UploadCard(
+                    title = "导入进度", subtitle = "按较新记录合并",
+                    icon = Icons.Rounded.Upload, enabled = true,
+                    modifier = Modifier.weight(1f),
+                ) { openProgress.launch(arrayOf("*/*")) }
+            }
+            Text(
+                text = "进度平时自动同步；导入时同一本书取较新的那份，不会把新的覆盖成旧的。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 10.dp),
+            )
         }
-        Text(
-            text = "进度平时存在路由器上，各端自动同步。这个文件用于整体搬家；导入时同一本书取较新的那份，不会把新的覆盖成旧的。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp),
+    }
+
+    pendingRestore?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingRestore = null },
+            title = { Text("确认恢复") },
+            text = {
+                Text(
+                    "恢复会直接覆盖路由器上同名的数据" +
+                        (if (mode == "media" || mode == "full") "与媒体文件" else "") +
+                        "，不会删除备份包里没有的文件。当前模式：" +
+                        BACKUP_MODES.first { it.first == mode }.second + "。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.restoreBackup(mode, effectiveUser, uri, uriSize(context, uri))
+                    pendingRestore = null
+                }) { Text("开始恢复") }
+            },
+            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text("取消") } },
         )
     }
 }
