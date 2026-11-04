@@ -79,11 +79,8 @@ body {
   background-image: var(--bg-grad);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
-  padding-bottom: calc(var(--mini-h) + 20px);
   transition: background-color .3s ease, color .3s ease;
 }
-
-body.mini-hidden { padding-bottom: 28px; }
 
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 svg path[d^="M8 5.5v13"], svg path[d^="M6 6.5v11L"], svg path[d^="M18 6.5v11"] { fill: currentColor; stroke: none; }
@@ -176,8 +173,13 @@ html[data-theme="dark"] .btn.primary { color: #221a12; }
 
 main {
   max-width: 1120px; margin: 0 auto;
-  padding: 10px clamp(16px, 4vw, 40px) 40px;
+  /* 底部留白给固定定位的迷你播放器让位。
+     注意不能写在 body 上：body 有 height:100%，padding 不参与文档高度，
+     章节列表最后一项会被播放器压住。 */
+  padding: 10px clamp(16px, 4vw, 40px) calc(var(--mini-h) + 40px);
 }
+
+body.mini-hidden main { padding-bottom: 40px; }
 .view { animation: fadeUp .32s cubic-bezier(.22,.9,.3,1); }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 

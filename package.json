@@ -1,6 +1,6 @@
 {
   "name": "tingshu-web",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "private": true,
   "description": "听书·网页书架的本地开发工具（仅用于跑冒烟测试，网页本身零依赖）",
   "scripts": {
