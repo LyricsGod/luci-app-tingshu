@@ -71,6 +71,11 @@ html[data-theme="dark"] {
 
 html, body { height: 100%; }
 
+/* 叠加式（overlay）滚动条不占布局宽度，固定定位的迷你播放器会铺满整个视口，
+   滚动时滑块就直接画在播放器右侧的按钮上。预留滚动条槽位后，
+   fixed 元素的包含块会排除这条槽，播放器 / 弹层都不会再被滚动条盖住。 */
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   font-family: var(--sans);
@@ -397,6 +402,7 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
 /* ---------------- 迷你播放器 ---------------- */
 
 .mini {
+  --mini-pad: clamp(14px, 4vw, 40px);
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
   background: color-mix(in srgb, var(--surface) 86%, transparent);
   backdrop-filter: blur(22px) saturate(160%);
@@ -406,12 +412,20 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
   animation: slideUp .3s cubic-bezier(.22,.9,.3,1);
 }
 @keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
-.mini-progress { height: 2px; background: var(--line-soft); }
-.mini-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
+/* 进度线只跟着内容区走。以前它横贯整个视口，看起来像一条压在播放器顶边的浮条。 */
+.mini-progress {
+  height: 2px;
+  /* 宽屏跟内容区同宽，窄屏也保留和 .mini-inner 一致的左右边距，
+     任何视口下都不会再横贯整屏压在播放器顶边。 */
+  width: min(1120px, calc(100% - 2 * var(--mini-pad)));
+  margin: 0 auto;
+  background: var(--line-soft);
+}
+.mini-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s linear; border-radius: 0 2px 2px 0; }
 .mini-inner {
   max-width: 1120px; margin: 0 auto;
   display: flex; align-items: center; gap: 16px;
-  padding: 10px clamp(14px, 4vw, 40px);
+  padding: 10px var(--mini-pad);
   min-height: 74px;
 }
 .mini-info { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; text-align: left; border-radius: 10px; }
