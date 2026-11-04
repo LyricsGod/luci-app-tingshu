@@ -73,9 +73,14 @@ jobs:
         run: |
           APP_VER=$(grep -oP "APP_VERSION\s*=\s*'\K[^']+" app.js)
           MK_VER=$(grep -oP '^PKG_VERSION:=\K.*' openwrt/Makefile)
-          echo "app.js=$APP_VER Makefile=$MK_VER"
+          ANDROID_VER=$(grep -oP 'versionName = "\K[^"]+' android/app/build.gradle.kts)
+          echo "app.js=$APP_VER Makefile=$MK_VER Android=$ANDROID_VER"
           [ "$APP_VER" = "$MK_VER" ] || {
             echo "::error::app.js 与 openwrt/Makefile 的版本号不一致"
+            exit 1
+          }
+          [ "$APP_VER" = "$ANDROID_VER" ] || {
+            echo "::error::app.js 与 android/app/build.gradle.kts 的 versionName 不一致"
             exit 1
           }
 
