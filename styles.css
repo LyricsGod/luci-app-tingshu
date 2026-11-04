@@ -32,7 +32,7 @@
   --shadow-lg: 0 10px 30px rgba(60, 44, 28, .10), 0 30px 70px rgba(60, 44, 28, .16);
   --serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
-  --mini-h: 82px;
+  --mini-h: 77px;   /* 迷你播放器实际高度（2px 进度 + 74px 内容 + 1px 边框） */
 }
 
 html[data-theme="light"] { color-scheme: light; }
@@ -171,15 +171,23 @@ html[data-theme="dark"] .btn.primary { color: #221a12; }
 
 /* ---------------- 通用布局 ---------------- */
 
+/* 页面滚动单独放在 #pageScroll 里：有迷你播放器时容器高度止于播放器上边缘，
+   右侧滚动条自然也只到那里，不会再贯穿到底部盖在播放器上。
+   播放器与弹层都在容器外，仍是完整视口宽度的 fixed 元素。 */
+#pageScroll {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+body:not(.mini-hidden) #pageScroll { height: calc(100% - var(--mini-h)); }
+
 main {
   max-width: 1120px; margin: 0 auto;
-  /* 底部留白给固定定位的迷你播放器让位。
-     注意不能写在 body 上：body 有 height:100%，padding 不参与文档高度，
-     章节列表最后一项会被播放器压住。 */
-  padding: 10px clamp(16px, 4vw, 40px) calc(var(--mini-h) + 40px);
+  /* 容器已经让出了播放器的高度，这里只留滚动到底的呼吸空间。
+     注意别把留白写回 body：body 有 height:100%，padding 不参与文档高度。 */
+  padding: 10px clamp(16px, 4vw, 40px) 40px;
 }
-
-body.mini-hidden main { padding-bottom: 40px; }
 .view { animation: fadeUp .32s cubic-bezier(.22,.9,.3,1); }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 

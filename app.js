@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.5.4';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.5.6';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -45,6 +45,7 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
   const el = {
+    pageScroll: $('#pageScroll'),
     audio: $('#audio'),
     folderInput: $('#folderInput'),
     libraryView: $('#libraryView'),
@@ -495,7 +496,8 @@
   /** 任何一个全屏层打开时锁住页面滚动 */
   function syncBodyScroll() {
     const locked = OVERLAYS.some(key => el[key] && !el[key].hidden);
-    document.body.style.overflow = locked ? 'hidden' : '';
+    // 滚动发生在 #pageScroll 上，锁它才有效；body 已经不再是滚动容器
+    el.pageScroll.style.overflowY = locked ? 'hidden' : '';
   }
 
   function openOverlay(node) {
@@ -1047,7 +1049,7 @@
     state.bookView = book;
     el.libraryView.hidden = true;
     el.bookView.hidden = false;
-    window.scrollTo({ top: 0 });
+    el.pageScroll.scrollTop = 0;
     renderBookView(book);
     scanDurations(book);
   }
@@ -1056,7 +1058,7 @@
     state.bookView = null;
     el.bookView.hidden = true;
     el.libraryView.hidden = false;
-    window.scrollTo({ top: 0 });
+    el.pageScroll.scrollTop = 0;
     renderLibrary();
   }
 
@@ -4536,8 +4538,8 @@
         reloadAndPlay();
       }
     });
-    window.addEventListener('scroll', () => {
-      document.body.classList.toggle('scrolled', window.scrollY > 6);
+    el.pageScroll.addEventListener('scroll', () => {
+      document.body.classList.toggle('scrolled', el.pageScroll.scrollTop > 6);
     }, { passive: true });
     window.addEventListener('resize', () => { if (!el.popover.hidden) hidePopover(); });
   }

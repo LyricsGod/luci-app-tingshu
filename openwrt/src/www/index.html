@@ -14,7 +14,10 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="mini-hidden">
+
+<!-- 页面滚动区：迷你播放器与所有弹层都在它外面，右侧滚动条只覆盖内容区 -->
+<div id="pageScroll">
 
 <header class="topbar">
   <div class="brand">
@@ -132,6 +135,8 @@
   </section>
 
 </main>
+
+</div><!-- /#pageScroll -->
 
 <!-- ============ 迷你播放器 ============ -->
 <div id="miniPlayer" class="mini" hidden>
