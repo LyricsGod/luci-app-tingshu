@@ -268,6 +268,18 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   await new Promise((r) => setTimeout(r, 60));
   check('服务器上的删除墓碑会删掉本地记录', $$('#pausemarksList .pm-item').length === 1);
 
+  /* ---- 删除：删掉的记录不能被 push 前的拉取又并回来 ---- */
+  click($('#pausemarksList .pm-del'));
+  await new Promise((r) => setTimeout(r, 900));
+  const delPush = pushedBodies[pushedBodies.length - 1] || {};
+  check('删除后推送的记录里没有这条', (delPush.items || []).every((m) => m.id !== 'pm-remote-1'));
+  check('删除写进了墓碑', !!(delPush.removed || {})['pm-remote-1']);
+  w.document.dispatchEvent(new w.Event('visibilitychange'));
+  await new Promise((r) => setTimeout(r, 150));
+  click($('#bookMarksBtn'));
+  await new Promise((r) => setTimeout(r, 60));
+  check('删掉的记录不会被拉取又并回来', $$('#pausemarksList .pm-item').length === 0);
+
   press('Escape');
   check('Esc 关闭暂停记录', $('#pausemarksSheet').hidden);
 

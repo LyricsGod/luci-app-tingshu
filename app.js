@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.2';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.3';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -3249,19 +3249,19 @@
     const localMap = new Map((local || []).map((m) => [m.id, m]));
 
     let changed = 0;
-    // 墓碑生效：服务器说删过的，本地这份如果没更新过也删掉
-    for (const [id, ts] of pmRemoved) {
+    // 墓碑生效：服务器说删过的，本地这份也删掉（id 唯一，删掉就不会再合法出现）
+    for (const [id] of pmRemoved) {
       const existing = localMap.get(id);
       if (!existing) continue;
-      if ((Number(existing.createdAt) || 0) <= ts) {
-        await dbDelete('pausemarks', id).catch(() => {});
-        localMap.delete(id);
-        changed++;
-      }
+      await dbDelete('pausemarks', id).catch(() => {});
+      localMap.delete(id);
+      changed++;
     }
     // 记录合并：同 id 取 createdAt 较新的
     for (const rec of items) {
       if (!rec || typeof rec !== 'object' || !rec.id) continue;
+      // 删过的不再从服务器并回来，否则删了等于没删
+      if (pmRemoved.has(rec.id)) continue;
       const existing = localMap.get(rec.id);
       const remoteTs = Number(rec.createdAt) || 0;
       const localTs = existing ? (Number(existing.createdAt) || 0) : 0;

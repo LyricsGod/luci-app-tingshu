@@ -750,13 +750,15 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         if (changed) pauseMarkStore.saveRemoved(pmRemoved)
 
         val map = pauseMarks.value.associateBy { it.id }.toMutableMap()
-        // 服务器上已经删掉的，本地这份要是没更新过也跟着删
-        val stale = map.entries.filter { (id, m) -> (pmRemoved[id] ?: 0L) >= m.createdAt }.map { it.key }
+        // 墓碑生效：服务器说删过的，本地这份也删掉（id 唯一，删掉就不会再合法出现）
+        val stale = map.keys.filter { pmRemoved.containsKey(it) }
         if (stale.isNotEmpty()) {
             stale.forEach { map.remove(it) }
             changed = true
         }
         for (r in remote.items) {
+            // 删过的不再从服务器并回来，否则删了等于没删
+            if (pmRemoved.containsKey(r.id)) continue
             val l = map[r.id]
             if (l == null || l.createdAt <= r.createdAt) {
                 if (l != r) changed = true
@@ -768,7 +770,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             pauseMarkStore.save(pauseMarks.value)
         }
         val remoteIds = remote.items.mapTo(HashSet()) { it.id }
-        return map.keys.any { id -> id !in remoteIds && (pmRemoved[id] ?: 0L) < (map[id]?.createdAt ?: 0L) }
+        return map.keys.any { id -> id !in remoteIds && !pmRemoved.containsKey(id) }
     }
 
     /* ---------------- 进度同步 ---------------- */
