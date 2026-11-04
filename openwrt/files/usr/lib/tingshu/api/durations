@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# 听书 · 每章时长（秒）
+#
+#   GET /cgi-ts/durations?b=<书名|__root__>
+#     → {"ok":true,"items":{"书名/001.mp3":623.1, ...}}
+#
+# 客户端用这些秒数算「已听 X 小时 / 全书 Y 小时」。解析在 durations.pl 里做，
+# 只读文件头（m4a 读 moov/mvhd，mp3 读首帧），不碰音频数据本身。
+# 结果缓存在 /tmp/tingshu/durations/，书目录变了才重算。
+#
+
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
+ts_require_auth
+
+BOOKS_DIR="${TINGSHU_BOOKS_DIR:-}"
+if [ -z "$BOOKS_DIR" ]; then
+	if [ -f /lib/functions.sh ] && [ -f /etc/config/tingshu ]; then
+		. /lib/functions.sh
+		config_load tingshu
+		config_get BOOKS_DIR main books_dir /mnt/audiobooks
+	else
+		BOOKS_DIR=/mnt/audiobooks
+	fi
+fi
+
+rel="$(ts_urldecode "$(ts_param "$QUERY_STRING" b)")"
+[ -n "$rel" ] || ts_fail 400 "missing b"
+case "$rel" in /*) ts_fail 400 "bad book" ;; esac
+case "/$rel/" in */../*) ts_fail 400 "bad book" ;; esac
+
+if [ "$rel" = "__root__" ]; then
+	dir="$BOOKS_DIR"
+else
+	dir="$BOOKS_DIR/$rel"
+fi
+[ -d "$dir" ] || ts_fail 404 "book not found"
+
+PERL="$(command -v perl 2>/dev/null)"
+[ -n "$PERL" ] || ts_fail 501 "perl not installed"
+
+CACHE_DIR="/tmp/tingshu/durations"
+mkdir -p "$CACHE_DIR" 2>/dev/null
+key="$(printf '%s' "$rel" | md5sum | cut -d' ' -f1)"
+cache="$CACHE_DIR/$key.json"
+
+json="$("$PERL" "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/durations.pl" \
+	--books "$BOOKS_DIR" --rel "$rel" --cache "$cache" 2>/dev/null)"
+[ -n "$json" ] || json='{}'
+
+ts_header
+printf '{"ok":true,"items":%s}\n' "$json"

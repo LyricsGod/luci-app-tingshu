@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-tingshu
-PKG_VERSION:=1.6.9
+PKG_VERSION:=1.6.10
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=tingshu
@@ -68,6 +68,7 @@ define Package/luci-app-tingshu/install
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/scan.sh $(1)/usr/lib/tingshu/scan.sh
 	$(INSTALL_DATA) ./files/usr/lib/tingshu/auth.sh $(1)/usr/lib/tingshu/auth.sh
 	$(INSTALL_DATA) ./files/usr/lib/tingshu/http.sh $(1)/usr/lib/tingshu/http.sh
+	$(INSTALL_DATA) ./files/usr/lib/tingshu/durations.pl $(1)/usr/lib/tingshu/durations.pl
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/progress $(1)/usr/lib/tingshu/api/progress
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/manage $(1)/usr/lib/tingshu/api/manage
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/collections $(1)/usr/lib/tingshu/api/collections
@@ -76,6 +77,7 @@ define Package/luci-app-tingshu/install
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/auth $(1)/usr/lib/tingshu/api/auth
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/users $(1)/usr/lib/tingshu/api/users
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/layout $(1)/usr/lib/tingshu/api/layout
+	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/durations $(1)/usr/lib/tingshu/api/durations
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/tingshu $(1)/etc/init.d/tingshu

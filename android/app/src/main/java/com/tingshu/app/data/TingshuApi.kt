@@ -238,6 +238,26 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         out
     }
 
+    /**
+     * 每章时长（秒），键是 track.path。
+     * 服务端用 duration.pl 读文件头算出来，客户端拿去算「已听 X 小时 / 全书 Y 小时」。
+     */
+    suspend fun fetchDurations(base: String, bookRel: String): Map<String, Double> = withContext(Dispatchers.IO) {
+        val url = "${base}cgi-ts/durations?b=" + URLEncoder.encode(bookRel, "UTF-8") +
+            "&t=" + System.currentTimeMillis()
+        val json = JSONObject(request(url, timeoutMs = 30000))
+        if (!json.optBoolean("ok")) return@withContext emptyMap()
+        val items = json.optJSONObject("items") ?: return@withContext emptyMap()
+        val out = HashMap<String, Double>(items.length())
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = items.optDouble(k, 0.0)
+            if (v > 0) out[k] = v
+        }
+        out
+    }
+
     suspend fun fetchCollections(base: String): List<Collection> = withContext(Dispatchers.IO) {
         val text = request("${base}cgi-ts/collections?t=${System.currentTimeMillis()}")
         val json = JSONObject(text)

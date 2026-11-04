@@ -58,6 +58,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,8 +80,10 @@ import com.tingshu.app.data.Progress
 import com.tingshu.app.ui.TingshuViewModel
 import com.tingshu.app.ui.components.BookCover
 import com.tingshu.app.ui.components.bookDoneCount
+import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.min
 import kotlin.math.roundToInt
 import com.tingshu.app.ui.components.bookFraction
 import com.tingshu.app.ui.components.bookPercent
@@ -111,6 +114,15 @@ fun BookScreen(
     val doneCount = bookDoneCount(book, record)
     val hasProgress = record?.isReal == true
     val collection = collections.firstOrNull { book.id in it.bookIds }
+
+    // 每章时长（服务端算好）→ 已听 X 小时 / 全书 Y 小时
+    val bookDurations by vm.bookDurations.collectAsStateWithLifecycle()
+    LaunchedEffect(book.id) { vm.loadDurations(book) }
+    val durationByPath = if (bookDurations.bookId == book.id) bookDurations.items else emptyMap()
+    val totalSeconds = remember(book.id, durationByPath) {
+        if (durationByPath.isEmpty()) 0.0 else book.tracks.sumOf { durationByPath[it.path] ?: 0.0 }
+    }
+    val hoursReady = totalSeconds > 0 && book.tracks.all { durationByPath.containsKey(it.path) }
 
     var showEdit by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
@@ -231,17 +243,45 @@ fun BookScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(6.dp))
-                        // 已听章节数 / 总章节数
+                        val shownIndex = if (isCurrent) playerState.index else (record?.index ?: 0)
+                        val shownPos = if (isCurrent) playerState.positionMs / 1000.0 else (record?.time ?: 0.0)
+                        val shownDur = if (isCurrent) playerState.durationMs / 1000.0 else 0.0
+                        val doneSet = record?.done?.toSet() ?: emptySet()
+                        val listenedSeconds = if (hoursReady) {
+                            book.tracks.indices.sumOf { i ->
+                                val d = durationByPath[book.tracks[i].path] ?: 0.0
+                                when {
+                                    doneSet.contains(i) -> d
+                                    i == shownIndex -> min(d, shownPos)
+                                    else -> 0.0
+                                }
+                            }
+                        } else 0.0
+
+                        // 共几章
                         Text(
-                            text = if (hasProgress) "已听 $doneCount/${book.chapterCount} 章" else "共 ${book.chapterCount} 章",
+                            text = "共 ${book.chapterCount} 章",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
+                        // 已听时长 / 全书时长（拿不到每章时长时退回按章节数）
+                        if (hoursReady) {
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                text = "已听 ${fmtHours(listenedSeconds)}h/${fmtHours(totalSeconds)}h",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        } else if (hasProgress) {
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                text = "已听 $doneCount/${book.chapterCount} 章",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
                         // 当前听到哪一章、本章进度（播放状态单独一行，和上个版本一致）
                         if (hasProgress) {
-                            val shownIndex = if (isCurrent) playerState.index else (record?.index ?: 0)
-                            val shownPos = if (isCurrent) playerState.positionMs / 1000.0 else (record?.time ?: 0.0)
-                            val shownDur = if (isCurrent) playerState.durationMs / 1000.0 else 0.0
                             Spacer(Modifier.height(3.dp))
                             Text(
                                 text = buildString {
@@ -756,6 +796,10 @@ private fun SelectionBar(
         }
     }
 }
+
+/** 秒 → 小时，保留一位小数（331.2h 这种） */
+private fun fmtHours(seconds: Double): String =
+    String.format(Locale.US, "%.1f", seconds / 3600.0)
 
 @Suppress("unused")
 private fun chapterLabel(book: Book, record: Progress?): String {

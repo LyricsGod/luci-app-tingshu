@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.9';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.10';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -1068,6 +1068,7 @@
     el.pageScroll.scrollTop = 0;
     renderBookView(book);
     scanDurations(book);
+    loadServerDurations(book);
   }
 
   function goLibrary() {
@@ -2340,6 +2341,46 @@
     } else if (!el.libraryView.hidden) {
       renderLibrary();
     }
+  }
+
+  /* ================= 服务器算好的章节时长 ================= */
+
+  /**
+   * 大书（上千章）没法在浏览器里逐个读元数据，改由服务端 perl 读文件头算好。
+   * 拿到后并进 state.durations，书架/书籍页的「全长 / 还剩」就准了。
+   */
+  async function loadServerDurations(book) {
+    if (!book || !book.id.startsWith('net:')) return;
+    let data;
+    try {
+      const res = await fetch('cgi-ts/durations?b=' + encodeURIComponent(book.id.slice(4)) + '&t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      data = await res.json();
+    } catch { return; }
+    if (!data || data.ok !== true || !data.items) return;
+
+    let changed = false;
+    book.tracks.forEach((t, i) => {
+      const key = durKey(book, i);
+      if (state.durations.has(key)) return;
+      const d = data.items[t.path];
+      if (typeof d === 'number' && d > 1) {
+        state.durations.set(key, d);
+        changed = true;
+      }
+    });
+    if (!changed) return;
+
+    if (state.bookView && state.bookView.id === book.id) {
+      updateBookStats(book);
+      updateBookMeta(book);
+      book.tracks.forEach((_, i) => {
+        const d = state.durations.get(durKey(book, i));
+        const time = el.trackList.children[i] && el.trackList.children[i].querySelector('.t-time');
+        if (time && d) time.textContent = fmtTime(d);
+      });
+    }
+    if (!el.libraryView.hidden) renderLibrary();
   }
 
   /* ================= 服务器备份 / 恢复（仅管理员） ================= */

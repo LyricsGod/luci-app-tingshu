@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -170,6 +171,31 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                 if (!isAuthError(t)) messages.tryEmit(humanError(t))
             } finally {
                 bookRefreshing.value = false
+            }
+        }
+    }
+
+    /* ---------------- 每章时长（已听 X 小时 / 全书 Y 小时） ---------------- */
+
+    data class BookDurations(
+        val bookId: String = "",
+        val items: Map<String, Double> = emptyMap(),
+    )
+
+    private val _bookDurations = MutableStateFlow(BookDurations())
+    val bookDurations: StateFlow<BookDurations> = _bookDurations.asStateFlow()
+
+    /** 打开书籍页时拉一次这本书的章节时长；服务端算好并缓存，失败就静默跳过。 */
+    fun loadDurations(book: Book) {
+        val base = serverUrl.value.ifBlank { prefs.serverUrl }
+        if (base.isBlank()) return
+        if (_bookDurations.value.bookId == book.id && _bookDurations.value.items.isNotEmpty()) return
+        viewModelScope.launch {
+            val map = withContext(Dispatchers.IO) {
+                runCatching { api.fetchDurations(base, book.folderId) }.getOrNull()
+            }
+            if (!map.isNullOrEmpty()) {
+                _bookDurations.value = BookDurations(book.id, map)
             }
         }
     }

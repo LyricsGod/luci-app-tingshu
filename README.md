@@ -130,6 +130,7 @@ LuCI → 服务 → 听书：
 | `cgi-ts/meta` | GET / POST | 书名 / 简介 / 配色 / 封面（封面为 base64），写需管理员 |
 | `cgi-ts/collections` | GET / POST | 整个合集列表读写 |
 | `cgi-ts/pausemarks` | GET / POST | `{"items":[…],"removed":{…}}`：记录 + 删除墓碑；每条记录带 `source`（`app` 移动端 / `web` 网页端） |
+| `cgi-ts/durations` | GET | `?b=<书名>`：每章时长（秒），`{"items":{"相对路径":623.1,…}}`；服务端用 `durations.pl` 读音频文件头算，结果缓存在 `/tmp` |
 | `cgi-ts/manage` | POST | `upload` / `archive` / `delete` / `rescan`（管理员） |
 | `cgi-ts/backup` | GET / POST | `info` / `export` / `import`（管理员，见下） |
 
