@@ -222,6 +222,18 @@ android/                             安卓客户端（Kotlin + Compose + Media3
 网页与 ipk 的版本号只有一个来源：`app.js` 里的 `APP_VERSION`，`build_ipk.py` 直接读它。
 安卓的版本号在 `android/app/build.gradle.kts`（`versionCode` / `versionName`）。三处要一起改，CI 会校验它们是否一致。
 
+### 发版
+
+改动推上去时顺手打一个同名 tag，CI 会自动建 Release，把 ipk 和 APK 一起传上去：
+
+```sh
+git push origin main
+git tag -a v1.6.2 -m "听书 1.6.2"
+git push origin v1.6.2
+```
+
+标签必须和 `APP_VERSION` 一致（`v` + 版本号），Release 页面：<https://github.com/LyricsGod/luci-app-tingshu/releases>
+
 ### 网页副本
 
 `openwrt/src/www/` 是根目录网页文件的副本（ipk 里打的是这一份）。`python build_ipk.py` 会自动同步，也可以 `npm run sync:www`；CI 会检查两边是否一致。
