@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.7';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.8';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -3916,10 +3916,11 @@
     return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  /* 暂停记录的原因标签：和「定时关闭」这个功能同名，两端显示一致 */
   const REASON_LABEL = {
     'pause': '暂停',
-    'timer': '定时暂停',
-    'timer-start': '开启定时',
+    'timer': '定时关闭',
+    'timer-start': '定时开启',
   };
 
   /* 暂停记录来源：'app' 安卓端、'web' 网页端；1.6.0 之前的旧记录没有来源，按空处理 */
@@ -3952,9 +3953,9 @@
     const t = String(title || '').trim();
     if (!t) return `第 ${index + 1} 章`;
     const want = index + 1;
-    const lead = t.match(/^(\d{1,3})(?=\s|$)/);
+    const lead = t.match(/^(\d{1,4})(?=\s|$)/);
     if (lead && Number(lead[1]) === want) return lead[1];
-    const tail = t.match(/(?:^|\s)(\d{1,3})$/);
+    const tail = t.match(/(?:^|\s)(\d{1,4})$/);
     if (tail && Number(tail[1]) === want) return tail[1];
     return t;
   }
@@ -3999,15 +4000,20 @@
       title.textContent = m.bookTitle;
       const sub = document.createElement('div');
       sub.className = 'pm-sub';
-      sub.textContent = `${pauseMarkTrackTitle(m)} · ${fmtTime(m.time)} · ${REASON_LABEL[m.reason] || '暂停'} · ${fmtStamp(m.createdAt)}`;
+      sub.textContent = `${pauseMarkTrackTitle(m)} · ${fmtTime(m.time)} · ${fmtStamp(m.createdAt)}`;
       main.append(title, sub);
+
+      // 原因单独做成标签：章节名很长时也不会被截掉「定时开启 / 定时关闭」
+      const reason = document.createElement('span');
+      reason.className = 'pm-reason ' + (m.reason === 'timer' || m.reason === 'timer-start' ? 'timer' : 'pause');
+      reason.textContent = REASON_LABEL[m.reason] || '暂停';
 
       const del = document.createElement('span');
       del.className = 'pm-del';
       del.title = '删除这条';
       del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12M10 11v4M14 11v4"/></svg>';
 
-      item.append(main, del);
+      item.append(main, reason, del);
       const badge = markSourceBadge(m.source);
       if (badge) item.insertBefore(badge, main);
       li.append(item);

@@ -249,7 +249,7 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   /* ---- 云端合并：另一端记的会并进来，删除墓碑能删掉本地那份 ---- */
   const remoteMark = {
     id: 'pm-remote-1', bookId: 'net:ming', bookTitle: '明朝那些事儿', index: 2,
-    trackTitle: '龙岭迷窟 03', time: 9, reason: 'pause', createdAt: Date.now() + 1000, source: 'app',
+    trackTitle: '龙岭迷窟 03', time: 9, reason: 'timer-start', createdAt: Date.now() + 1000, source: 'app',
   };
   routes['cgi-ts/pausemarks'] = { ok: true, items: [remoteMark], removed: {} };
   w.document.dispatchEvent(new w.Event('visibilitychange'));
@@ -260,6 +260,9 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   check('并进来的记录显示移动端图标', $$('#pausemarksList .pm-src.app').length === 1);
   const mergedSub = $$('#pausemarksList .pm-item')[0].querySelector('.pm-sub').textContent;
   check('章节号按网页端的短格式显示', mergedSub.startsWith('03 ·'));
+  check('每条记录都有原因标签', $$('#pausemarksList .pm-reason').length === 2);
+  check('开启定时显示「定时开启」', $$('#pausemarksList .pm-reason').some((el) => el.textContent === '定时开启'));
+  check('普通暂停显示「暂停」', $$('#pausemarksList .pm-reason').some((el) => el.textContent === '暂停'));
 
   routes['cgi-ts/pausemarks'] = {
     ok: true,
@@ -283,6 +286,23 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   click($('#bookMarksBtn'));
   await new Promise((r) => setTimeout(r, 60));
   check('删掉的记录不会被拉取又并回来', $$('#pausemarksList .pm-item').length === 0);
+
+  /* ---- 定时到点自动暂停：原因标签显示「定时关闭」 ---- */
+  routes['cgi-ts/pausemarks'] = {
+    ok: true,
+    items: [{
+      id: 'pm-timer-1', bookId: 'net:ming', bookTitle: '明朝那些事儿', index: 1848,
+      trackTitle: '1849 【第4卷：谁与争锋】第352章 闵人无数', time: 586, reason: 'timer',
+      createdAt: Date.now(), source: 'app',
+    }],
+    removed: {},
+  };
+  w.document.dispatchEvent(new w.Event('visibilitychange'));
+  await new Promise((r) => setTimeout(r, 150));
+  click($('#bookMarksBtn'));
+  await new Promise((r) => setTimeout(r, 60));
+  check('定时到点暂停显示「定时关闭」', $$('#pausemarksList .pm-reason').some((el) => el.textContent === '定时关闭'));
+  check('四位数章节号也按短格式显示', $$('#pausemarksList .pm-sub')[0].textContent.startsWith('1849 ·'));
 
   press('Escape');
   check('Esc 关闭暂停记录', $('#pausemarksSheet').hidden);

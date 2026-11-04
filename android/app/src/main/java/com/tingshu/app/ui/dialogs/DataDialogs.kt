@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -511,8 +512,6 @@ private fun PauseMarkRow(
                     append(" · ")
                     append(formatTime(mark.time))
                     append(" · ")
-                    append(reasonLabel(mark.reason))
-                    append(" · ")
                     append(stamp(mark.createdAt))
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -521,6 +520,9 @@ private fun PauseMarkRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(8.dp))
+        // 原因单独做成小标签：章节名很长时也不会把「定时开启 / 定时关闭」挤没
+        ReasonBadge(mark.reason)
         IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
             Icon(
                 imageVector = Icons.Rounded.DeleteOutline,
@@ -532,9 +534,27 @@ private fun PauseMarkRow(
     }
 }
 
+@Composable
+private fun ReasonBadge(reason: String) {
+    val colors = MaterialTheme.colorScheme
+    val timer = reason == "timer" || reason == "timer-start"
+    Surface(
+        shape = RoundedCornerShape(7.dp),
+        color = if (timer) colors.primaryContainer else colors.surfaceContainerHighest,
+        contentColor = if (timer) colors.primary else colors.onSurfaceVariant,
+    ) {
+        Text(
+            text = reasonLabel(reason),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            maxLines = 1,
+        )
+    }
+}
+
 private fun reasonLabel(reason: String): String = when (reason) {
-    "timer" -> "定时暂停"
-    "timer-start" -> "开启定时"
+    "timer" -> "定时关闭"
+    "timer-start" -> "定时开启"
     else -> "暂停"
 }
 
@@ -549,8 +569,8 @@ private fun shortChapterLabel(title: String, index: Int): String {
     val t = title.trim()
     if (t.isEmpty()) return "第 ${index + 1} 章"
     val want = index + 1
-    Regex("^(\\d{1,3})(?=\\s|$)").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
-    Regex("(?:^|\\s)(\\d{1,3})$").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
+    Regex("^(\\d{1,4})(?=\\s|$)").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
+    Regex("(?:^|\\s)(\\d{1,4})$").find(t)?.let { if (it.groupValues[1].toInt() == want) return it.groupValues[1] }
     return t
 }
 

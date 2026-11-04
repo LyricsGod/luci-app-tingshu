@@ -667,20 +667,43 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
 
     private fun addPauseMark(reason: String, state: PlayerUiState) {
         val bookId = state.bookId ?: return
-        val now = System.currentTimeMillis()
         val time = state.positionMs / 1000.0
         if (time < 1 && reason != "timer-start") return
 
         val book = books.value.firstOrNull { it.id == bookId }
         val index = state.index.coerceAtLeast(0)
         val trackTitle = book?.tracks?.getOrNull(index)?.title ?: state.trackTitle
+        addPauseMarkFor(
+            bookId = bookId,
+            index = index,
+            timeSeconds = time,
+            reason = reason,
+            bookTitle = book?.title ?: state.bookTitle,
+            trackTitle = trackTitle,
+        )
+    }
+
+    /** 指定书 / 章节 / 位置地记一笔，定时在章节结束时触发的记录会用到。 */
+    private fun addPauseMarkFor(
+        bookId: String,
+        index: Int,
+        timeSeconds: Double,
+        reason: String,
+        bookTitle: String? = null,
+        trackTitle: String? = null,
+    ) {
+        val now = System.currentTimeMillis()
+        val book = books.value.firstOrNull { it.id == bookId }
+        val safeIndex = index.coerceAtLeast(0)
         val mark = PauseMark(
             id = "pm-$now-${(1000..9999).random()}",
             bookId = bookId,
-            bookTitle = book?.title ?: state.bookTitle,
-            index = index,
-            trackTitle = trackTitle,
-            time = time,
+            bookTitle = bookTitle ?: book?.title ?: playerState.value.bookTitle,
+            index = safeIndex,
+            trackTitle = trackTitle
+                ?: book?.tracks?.getOrNull(safeIndex)?.title
+                ?: playerState.value.trackTitle,
+            time = timeSeconds,
             reason = reason,
             createdAt = now,
             source = PauseMark.SOURCE_APP,
@@ -863,7 +886,14 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         pushProgress(transition.bookId, updated, force = true)
 
         if (sleep.value.atChapterEnd) {
-            addPauseMark("timer", playerState.value)
+            // 「播完本章」型的定时：记在刚播完的那一章上，位置用它的末尾；
+            // 直接拿 playerState 会是下一章 0:00，记录会被 time<1 的规则吞掉
+            addPauseMarkFor(
+                bookId = transition.bookId,
+                index = transition.fromIndex,
+                timeSeconds = current.time.coerceAtLeast(1.0),
+                reason = "timer",
+            )
             player.pause()
             sleep.value = SleepState()
             messages.tryEmit("本章已播完，定时暂停")

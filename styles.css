@@ -836,6 +836,12 @@ input[type="range"]::-moz-range-thumb {
 .pm-item .pm-src.app { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .pm-item .pm-title { font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-item .pm-sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+/* 原因标签：定时开启 / 定时关闭 / 暂停 */
+.pm-item .pm-reason {
+  flex: none; padding: 3px 8px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); white-space: nowrap;
+}
+.pm-item .pm-reason.timer { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .pm-item .pm-del {
   flex: none; width: 32px; height: 32px; border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
