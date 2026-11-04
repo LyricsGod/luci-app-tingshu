@@ -659,6 +659,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             time = time,
             reason = reason,
             createdAt = now,
+            source = PauseMark.SOURCE_APP,
         )
         pauseMarks.value = (pauseMarks.value + mark).sortedByDescending { it.createdAt }
         pauseMarkStore.save(pauseMarks.value)

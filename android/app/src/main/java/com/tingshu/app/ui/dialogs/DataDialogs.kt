@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,9 +26,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -474,6 +477,24 @@ private fun PauseMarkRow(
             .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val colors = MaterialTheme.colorScheme
+        if (mark.isFromApp || mark.isFromWeb) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (mark.isFromApp) colors.primaryContainer else colors.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (mark.isFromApp) Icons.Filled.Smartphone else Icons.Filled.Computer,
+                    contentDescription = if (mark.isFromApp) "来自安卓客户端" else "来自网页端",
+                    tint = if (mark.isFromApp) colors.primary else colors.onSurfaceVariant,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 text = if (showBook) mark.bookTitle.ifBlank { "未知书籍" } else mark.trackTitle,

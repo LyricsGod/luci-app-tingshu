@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.5.9';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.0';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -3188,6 +3188,7 @@
           time: m.time,
           reason: m.reason || 'pause',
           createdAt: m.createdAt || 0,
+          source: m.source || '',
         }));
         await fetch(PAUSEMARKS_API, {
           method: 'POST',
@@ -3231,6 +3232,7 @@
         time: Number(rec.time) || 0,
         reason: rec.reason || 'pause',
         createdAt: remoteTs,
+        source: normalizeMarkSource(rec.source),
       };
       await dbPut('pausemarks', merged).catch(() => {});
       changed++;
@@ -3616,6 +3618,8 @@
       time,
       reason,
       createdAt: Date.now(),
+      // 来源标记：网页端记 'web'，安卓端记 'app'，暂停记录列表按它显示小图标
+      source: 'web',
     };
     dbPut('pausemarks', mark).catch(() => {});
     pushServerPauseMarks();
@@ -3639,6 +3643,28 @@
     'timer': '定时暂停',
     'timer-start': '开启定时',
   };
+
+  /* 暂停记录来源：'app' 安卓端、'web' 网页端；1.6.0 之前的旧记录没有来源，按空处理 */
+  const MARK_SOURCE_LABEL = { app: '移动端', web: '网页端' };
+  const MARK_SOURCE_ICON = {
+    app: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
+    web: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12.5" rx="2"/><path d="M9 21h6M12 17v4"/></svg>',
+  };
+
+  function normalizeMarkSource(v) {
+    return v === 'app' || v === 'web' ? v : '';
+  }
+
+  function markSourceBadge(source) {
+    const key = normalizeMarkSource(source);
+    if (!key) return null;
+    const badge = document.createElement('span');
+    badge.className = 'pm-src ' + key;
+    badge.title = '来自' + (key === 'app' ? '安卓客户端' : '网页端');
+    badge.setAttribute('aria-label', MARK_SOURCE_LABEL[key]);
+    badge.innerHTML = MARK_SOURCE_ICON[key];
+    return badge;
+  }
 
   async function openPauseMarks(bookId) {
     openOverlay(el.pausemarksSheet);
@@ -3682,6 +3708,8 @@
       del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12M10 11v4M14 11v4"/></svg>';
 
       item.append(main, del);
+      const badge = markSourceBadge(m.source);
+      if (badge) item.insertBefore(badge, main);
       li.append(item);
 
       item.addEventListener('click', async () => {

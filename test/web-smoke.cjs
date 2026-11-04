@@ -131,8 +131,16 @@ const routes = {
   'library.json': BOOKS,
 };
 
-w.fetch = (input) => {
+/* 记录推送出去的请求体，用来核对数据字段（例如暂停记录的来源标记） */
+const pushedBodies = [];
+const requests = [];
+
+w.fetch = (input, init) => {
   const url = typeof input === 'string' ? input : (input && input.url) || '';
+  requests.push({ url, init: init || null });
+  if (init && init.body && typeof init.body === 'string' && url.includes('cgi-ts/pausemarks')) {
+    try { pushedBodies.push(JSON.parse(init.body)); } catch { /* 忽略 */ }
+  }
   const key = Object.keys(routes).find((k) => url.startsWith(k));
   const body = key ? routes[key] : { ok: true };
   return Promise.resolve({
@@ -154,6 +162,9 @@ w.matchMedia = (query) => ({
 w.URL.createObjectURL = () => 'blob:fake-' + Math.random().toString(36).slice(2);
 w.URL.revokeObjectURL = () => {};
 w.scrollTo = () => {};
+/* jsdom 没带 TextEncoder / TextDecoder，播放路径要给书籍 id 转十六进制 */
+w.TextEncoder = TextEncoder;
+w.TextDecoder = TextDecoder;
 w.HTMLCanvasElement.prototype.getContext = () => null;
 w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
 w.HTMLMediaElement.prototype.pause = function () {};
@@ -209,6 +220,27 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   check('进入书籍详情', !$('#bookView').hidden && $('#libraryView').hidden);
   check('章节列表渲染 2 条', $$('#trackList .track-item').length === 2);
   check('书名显示正确', $('#bookTitle').textContent === '明朝那些事儿');
+
+  /* ---- 暂停记录：来源标记（网页端记 web，列表里显示小图标） ---- */
+  click($$('#trackList .track-item')[0]);
+  // 切换章节后 600ms 内触发的 pause 会被当成切章忽略，等它过去再模拟暂停
+  await new Promise((r) => setTimeout(r, 700));
+  const audio = $('#audio');
+  Object.defineProperty(audio, 'currentTime', { configurable: true, get: () => 42 });
+  Object.defineProperty(audio, 'duration', { configurable: true, get: () => 300 });
+  audio.dispatchEvent(new w.Event('play'));
+  audio.dispatchEvent(new w.Event('pause'));
+  await new Promise((r) => setTimeout(r, 80));
+  click($('#bookMarksBtn'));
+  await new Promise((r) => setTimeout(r, 60));
+  check('暂停记录列表有 1 条', $$('#pausemarksList .pm-item').length === 1);
+  check('记录前面有来源小图标', $$('#pausemarksList .pm-src').length === 1);
+  check('网页端记录标记为 web', !!$('#pausemarksList .pm-src.web'));
+  await new Promise((r) => setTimeout(r, 600));
+  const pmPush = pushedBodies[pushedBodies.length - 1] || [];
+  check('推送的数据带上 source=web', pmPush.some((m) => m && m.source === 'web'));
+  press('Escape');
+  check('Esc 关闭暂停记录', $('#pausemarksSheet').hidden);
 
   click($('#backBtn'));
   check('返回书架', $('#bookView').hidden && !$('#libraryView').hidden);

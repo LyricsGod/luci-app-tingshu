@@ -28,6 +28,7 @@ class PauseMarksStore(context: Context) {
                     time = o.optDouble("time", 0.0),
                     reason = o.optString("reason").ifBlank { "pause" },
                     createdAt = o.optLong("createdAt"),
+                    source = o.optString("source"),
                 )
             )
         }
@@ -58,6 +59,7 @@ class PauseMarksStore(context: Context) {
                         .put("time", m.time)
                         .put("reason", m.reason)
                         .put("createdAt", m.createdAt)
+                        .put("source", m.source)
                 )
             }
             return arr

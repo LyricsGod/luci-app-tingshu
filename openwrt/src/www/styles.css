@@ -803,6 +803,14 @@ input[type="range"]::-moz-range-thumb {
 }
 .pm-item:hover { border-color: var(--accent-line); }
 .pm-item .pm-main { flex: 1; min-width: 0; }
+/* 来源小图标：手机 = 移动端，显示器 = 网页端 */
+.pm-item .pm-src {
+  flex: none; width: 27px; height: 27px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+}
+.pm-item .pm-src svg { width: 15px; height: 15px; }
+.pm-item .pm-src.app { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .pm-item .pm-title { font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-item .pm-sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
 .pm-item .pm-del {

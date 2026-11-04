@@ -71,7 +71,17 @@ data class PauseMark(
     val time: Double,
     val reason: String,
     val createdAt: Long,
-)
+    /** 记录来源："app" 安卓客户端、"web" 网页端；旧记录没有这个字段，为空串。 */
+    val source: String = "",
+) {
+    val isFromApp: Boolean get() = source == SOURCE_APP
+    val isFromWeb: Boolean get() = source == SOURCE_WEB
+
+    companion object {
+        const val SOURCE_APP = "app"
+        const val SOURCE_WEB = "web"
+    }
+}
 
 data class LibrarySnapshot(
     val books: List<Book>,

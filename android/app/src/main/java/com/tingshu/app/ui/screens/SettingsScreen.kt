@@ -240,7 +240,7 @@ fun SettingsScreen(
 
             SectionCard("关于") {
                 InfoLine("客户端版本", BuildConfig.VERSION_NAME)
-                InfoLine("接口", "/cgi-ts · 听书 1.4.x")
+                InfoLine("接口", "/cgi-ts · 听书 1.6.x")
                 ActionRow("在浏览器中打开网页版") {
                     if (serverUrl.isNotBlank()) {
                         runCatching {

@@ -305,6 +305,7 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
                     time = o.optDouble("time", 0.0),
                     reason = o.optString("reason").ifBlank { "pause" },
                     createdAt = o.optLong("createdAt"),
+                    source = o.optString("source"),
                 )
             )
         }
