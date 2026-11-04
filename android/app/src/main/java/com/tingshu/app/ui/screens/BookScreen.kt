@@ -129,6 +129,8 @@ fun BookScreen(
     var showCollections by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmUnread by remember { mutableStateOf(false) }
+    // 书籍页小字第二行：默认显示剩余时长，点一下切成已听/共
+    var showListened by rememberSaveable(book.id) { mutableStateOf(false) }
     // 章节多选：批量标已读 / 未读
     var selecting by rememberSaveable(book.id) { mutableStateOf(false) }
     var selected by remember(book.id) { mutableStateOf(setOf<Int>()) }
@@ -264,14 +266,24 @@ fun BookScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
-                        // 还剩多少小时（拿不到每章时长时退回按章节数）
+                        // 剩余时长 / 已听时长：点一下切换（默认显示剩余）
                         if (hoursReady) {
                             val remainingSeconds = (totalSeconds - listenedSeconds).coerceAtLeast(0.0)
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                text = if (remainingSeconds < 60) "已听完" else "剩余 ${fmtHours(remainingSeconds)} 小时",
+                                text = when {
+                                    showListened -> "已听 ${fmtHours(listenedSeconds)} 小时/共 ${fmtHours(totalSeconds)} 小时"
+                                    remainingSeconds < 60 -> "已听完"
+                                    else -> "剩余 ${fmtHours(remainingSeconds)} 小时"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { showListened = !showListened }
+                                    .padding(vertical = 2.dp),
                             )
                         } else if (hasProgress) {
                             Spacer(Modifier.height(3.dp))
