@@ -17,38 +17,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: JS
-        run: node --check app.js
-
-      - name: 前端与 LuCI 页面
-        run: |
-          node --check openwrt/src/www/app.js
-          node -e "new Function('view','_','E','require', require('fs').readFileSync('openwrt/htdocs/luci-static/resources/view/tingshu/main.js','utf8'))"
-          echo "LuCI main.js OK"
-
-      - name: Shell
+      - name: JS 语法
         run: |
           set -e
-          for f in \
-            openwrt/files/etc/init.d/tingshu \
-            openwrt/files/usr/lib/tingshu/scan.sh \
-            openwrt/files/usr/lib/tingshu/api/progress \
-            openwrt/files/usr/lib/tingshu/api/manage \
-            openwrt/files/etc/uci-defaults/90-luci-app-tingshu \
-            openwrt/postinst openwrt/prerm ; do
-            sh -n "$f" && echo "ok  $f"
+          git ls-files '*.js' '*.cjs' | while IFS= read -r f; do
+            node --check "$f"
+            echo "ok  $f"
           done
 
-      - name: JSON
+      - name: 网页冒烟测试
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+
+      - name: LuCI 页面可加载
+        run: |
+          node -e "new Function('view','_','E','require', require('fs').readFileSync('openwrt/htdocs/luci-static/resources/view/tingshu/main.js','utf8'))"
+          echo "ok  LuCI main.js"
+
+      - name: Shell 语法
         run: |
           set -e
-          for f in openwrt/root/usr/share/luci/menu.d/*.json openwrt/root/usr/share/rpcd/acl.d/*.json ; do
+          # 只检查带 shebang 的文件，配置/JSON 跳过
+          git ls-files 'openwrt/*' | while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            head -c 2 "$f" | grep -q '#!' || continue
+            sh -n "$f"
+            echo "ok  $f"
+          done
+
+      - name: Python 语法
+        run: |
+          python3 -m py_compile build_ipk.py
+          echo "ok  build_ipk.py"
+
+      - name: JSON 合法性
+        run: |
+          set -e
+          for f in openwrt/root/usr/share/luci/menu.d/*.json openwrt/root/usr/share/rpcd/acl.d/*.json; do
             python3 -m json.tool "$f" > /dev/null && echo "ok  $f"
           done
 
+      - name: 网页副本与根目录一致
+        run: |
+          set -e
+          for f in index.html styles.css app.js icon.svg manifest.webmanifest; do
+            cmp "$f" "openwrt/src/www/$f" || {
+              echo "::error::$f 与 openwrt/src/www/$f 不一致，先跑 python build_ipk.py 同步"
+              exit 1
+            }
+          done
+          echo "副本一致"
+
+      - name: 版本号一致
+        run: |
+          APP_VER=$(grep -oP "APP_VERSION\s*=\s*'\K[^']+" app.js)
+          MK_VER=$(grep -oP '^PKG_VERSION:=\K.*' openwrt/Makefile)
+          echo "app.js=$APP_VER Makefile=$MK_VER"
+          [ "$APP_VER" = "$MK_VER" ] || {
+            echo "::error::app.js 与 openwrt/Makefile 的版本号不一致"
+            exit 1
+          }
+
       - name: 确认没有 CRLF（会破坏 shebang）
         run: |
-          if grep -rlU $'\r' openwrt/files openwrt/postinst openwrt/prerm 2>/dev/null | grep -q . ; then
+          if grep -rlU $'\r' openwrt/files openwrt/postinst openwrt/prerm build_ipk.py 2>/dev/null | grep -q . ; then
             echo "::error::脚本里存在 CRLF，安装后 shebang 会失效"
             exit 1
           fi

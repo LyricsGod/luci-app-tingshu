@@ -1,0 +1,222 @@
+/**
+ * 网页端冒烟测试（jsdom）
+ *
+ * 用一份假的服务器数据把 app.js 完整跑一遍：登录态 → 书架渲染 → 主题/排序
+ * → 弹层开关 → 书籍详情，确认重构后没有断链、没有未捕获异常。
+ *
+ * 运行：npm test
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { JSDOM } = require('jsdom');
+
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const appJs = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+
+const errors = [];
+process.on('unhandledRejection', (e) => errors.push('unhandledRejection: ' + ((e && e.message) || e)));
+
+const dom = new JSDOM(html, {
+  url: 'http://127.0.0.1:8686/',
+  runScripts: 'outside-only',
+  pretendToBeVisual: true,
+});
+const w = dom.window;
+w.addEventListener('error', (e) => errors.push('window.error: ' + ((e.error && e.error.message) || e.message)));
+
+/* ---------------- 极简 IndexedDB ----------------
+   jsdom 不带 IndexedDB，而 app.js 的进度/设置都走它。
+   这里按用到的 API 做内存实现，让持久化路径也真正被执行。 */
+function installFakeIDB(win) {
+  const stores = new Map();
+
+  const later = (fn) => {
+    const req = {};
+    setTimeout(() => {
+      try {
+        req.result = fn();
+        if (req.onsuccess) req.onsuccess();
+      } catch (err) {
+        req.error = err;
+        if (req.onerror) req.onerror();
+      }
+    }, 0);
+    return req;
+  };
+
+  const storeApi = (name) => {
+    const bucket = () => stores.get(name);
+    return {
+      get: (key) => later(() => bucket().data.get(key)),
+      getAll: () => later(() => Array.from(bucket().data.values())),
+      put: (value, key) => later(() => {
+        const k = key !== undefined ? key : (bucket().keyPath ? value[bucket().keyPath] : undefined);
+        bucket().data.set(k, value);
+        return k;
+      }),
+      delete: (key) => later(() => { bucket().data.delete(key); }),
+      clear: () => later(() => { bucket().data.clear(); }),
+    };
+  };
+
+  win.indexedDB = {
+    open() {
+      const db = {
+        objectStoreNames: { contains: (n) => stores.has(n) },
+        createObjectStore: (n, opt) => {
+          stores.set(n, { keyPath: opt && opt.keyPath, data: new Map() });
+        },
+        transaction: (n) => ({ objectStore: () => storeApi(n) }),
+        close() {},
+      };
+      const req = {};
+      setTimeout(() => {
+        req.result = db;
+        if (req.onupgradeneeded) req.onupgradeneeded();
+        if (req.onsuccess) req.onsuccess();
+      }, 0);
+      return req;
+    },
+  };
+}
+
+installFakeIDB(w);
+
+/* ---------------- 假的服务器 ----------------
+   cgi-ts/* 与 library.json 都返回固定数据，和真实 CGI 的字段保持一致。 */
+const hex = (s) => Buffer.from(s, 'utf8').toString('hex');
+
+const BOOKS = {
+  root: '/mnt/books',
+  books: [
+    {
+      id: 'santi',
+      title: '三体',
+      tracks: [
+        { title: '01 地球往事', path: 'santi/01.mp3' },
+        { title: '02 红岸', path: 'santi/02.mp3' },
+      ],
+    },
+    {
+      id: 'ming',
+      title: '明朝那些事儿',
+      tracks: [
+        { title: '01', path: 'ming/01.mp3' },
+        { title: '02', path: 'ming/02.mp3' },
+      ],
+    },
+  ],
+};
+
+const routes = {
+  'cgi-ts/auth': { ok: true, configured: true, authenticated: true, user: 'admin', role: 'admin' },
+  'cgi-ts/layout': { ok: true, layout: { columns: 3 } },
+  'cgi-ts/progress': {
+    ok: true,
+    items: { [hex('net:santi')]: { index: 1, time: 42, done: [0], updatedAt: 1700000000000 } },
+  },
+  'cgi-ts/collections': {
+    ok: true,
+    data: [{ id: 'c1', name: '科幻', bookIds: ['net:santi'], createdAt: 1, updatedAt: 1 }],
+  },
+  'cgi-ts/meta': { ok: true, items: {} },
+  'cgi-ts/pausemarks': { ok: true, items: [] },
+  'library.json': BOOKS,
+};
+
+w.fetch = (input) => {
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
+  const key = Object.keys(routes).find((k) => url.startsWith(k));
+  const body = key ? routes[key] : { ok: true };
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    blob: () => Promise.resolve(new w.Blob(['fake-audio'])),
+  });
+};
+
+/* jsdom 没实现的浏览器能力，按需打桩 */
+w.matchMedia = (query) => ({
+  matches: false,
+  media: query,
+  addEventListener() {},
+  removeEventListener() {},
+});
+w.URL.createObjectURL = () => 'blob:fake-' + Math.random().toString(36).slice(2);
+w.URL.revokeObjectURL = () => {};
+w.scrollTo = () => {};
+w.HTMLCanvasElement.prototype.getContext = () => null;
+w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+w.HTMLMediaElement.prototype.pause = function () {};
+w.HTMLMediaElement.prototype.load = function () {};
+Object.defineProperty(w.HTMLElement.prototype, 'clientWidth', { get() { return 300; } });
+Object.defineProperty(w.HTMLElement.prototype, 'clientHeight', { get() { return 300; } });
+
+/* ---------------- 断言 ---------------- */
+const $ = (s) => w.document.querySelector(s);
+const $$ = (s) => Array.from(w.document.querySelectorAll(s));
+const click = (el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+const press = (key) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true }));
+
+const results = [];
+const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
+
+(async () => {
+  try {
+    w.eval(appJs);
+  } catch (err) {
+    errors.push('eval: ' + err.message);
+  }
+  await new Promise((r) => setTimeout(r, 500));
+
+  check('书架渲染出 2 张卡片（1 合集 + 1 书）', $$('.book-card').length === 2);
+  check('合集卡片使用九宫格封面', !!$('.collection-card .mosaic'));
+  check('登录用户显示为 admin', $('#userLabel').textContent === 'admin');
+  check('按服务器布局显示每行 3 本', $('#bookGrid').style.gridTemplateColumns.includes('3'));
+  check('继续收听卡片出现', !$('#resumeHero').hidden);
+  check('书架计数包含合集数量', /合集/.test($('#shelfCount').textContent));
+  check('进度写入了 localStorage 用户标记', w.localStorage.getItem('tingshu.user') === 'admin');
+
+  click($('#themeBtn'));
+  check('主题按钮切换 data-theme', ['dark', 'light', 'auto'].includes(w.document.documentElement.dataset.theme));
+
+  const beforeSort = $('#sortBtn').textContent;
+  click($('#sortBtn'));
+  check('排序按钮文案会变化', $('#sortBtn').textContent !== beforeSort);
+
+  click($('#newCollectionBtn'));
+  check('新建合集弹层打开', !$('#colEditSheet').hidden);
+  press('Escape');
+  check('Esc 关闭新建合集弹层', $('#colEditSheet').hidden);
+
+  click($('#pickBtn'));
+  check('服务器模式下打开上传弹层', !$('#uploadSheet').hidden);
+  press('Escape');
+  check('Esc 关闭上传弹层', $('#uploadSheet').hidden);
+
+  const card = $$('.book-card').find((c) => c.dataset.id === 'net:ming');
+  check('找到《明朝那些事儿》卡片', !!card);
+  click(card);
+  check('进入书籍详情', !$('#bookView').hidden && $('#libraryView').hidden);
+  check('章节列表渲染 2 条', $$('#trackList .track-item').length === 2);
+  check('书名显示正确', $('#bookTitle').textContent === '明朝那些事儿');
+
+  click($('#backBtn'));
+  check('返回书架', $('#bookView').hidden && !$('#libraryView').hidden);
+
+  check('没有未捕获异常', errors.length === 0);
+
+  for (const [state, name] of results) console.log(state.padEnd(5), name);
+  if (errors.length) {
+    console.log('\n错误:');
+    errors.forEach((e) => console.log(' -', e));
+  }
+  const passed = results.filter((r) => r[0] === 'PASS').length;
+  console.log(`\n总计 ${passed}/${results.length}`);
+  process.exit(passed === results.length ? 0 : 1);
+})();

@@ -1,0 +1,14 @@
+{
+  "name": "tingshu-web",
+  "version": "1.4.2",
+  "private": true,
+  "description": "听书·网页书架的本地开发工具（仅用于跑冒烟测试，网页本身零依赖）",
+  "scripts": {
+    "test": "node test/web-smoke.cjs",
+    "test:web": "node test/web-smoke.cjs",
+    "sync:www": "node -e \"const fs=require('fs');for(const f of ['index.html','styles.css','app.js','icon.svg','manifest.webmanifest'])fs.copyFileSync(f,'openwrt/src/www/'+f);console.log('已同步到 openwrt/src/www')\""
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}
