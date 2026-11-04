@@ -42,4 +42,42 @@ class UrlsTest {
         assertEquals("192.168.1.1:8686", Urls.hostLabel("http://192.168.1.1:8686/"))
         assertEquals("example.com:8686/tingshu", Urls.hostLabel("https://example.com:8686/tingshu/"))
     }
+
+    @Test
+    fun `地址分栏编辑能拆出协议主机端口`() {
+        assertEquals(
+            Urls.ServerParts("http", "192.168.2.1", "8686"),
+            Urls.splitServer("192.168.2.1:8686"),
+        )
+        assertEquals(
+            Urls.ServerParts("https", "ting.example.com", "443"),
+            Urls.splitServer("https://ting.example.com:443"),
+        )
+        assertEquals(
+            Urls.ServerParts("https", "example.com", "", "/tingshu"),
+            Urls.splitServer("https://example.com/tingshu/"),
+        )
+        assertEquals(
+            Urls.ServerParts("http", "ting.example.com", ""),
+            Urls.splitServer("ting.example.com"),
+        )
+    }
+
+    @Test
+    fun `分栏拼回的地址不带手打冒号且能被归一化`() {
+        assertEquals("https://ting.example.com:443", Urls.joinServer("https", "ting.example.com", "443"))
+        assertEquals("http://192.168.2.1", Urls.joinServer("http", "192.168.2.1", ""))
+        assertEquals(
+            "https://example.com/tingshu",
+            Urls.joinServer("https", "example.com", "", "/tingshu"),
+        )
+        assertEquals(
+            "https://ting.example.com:443/",
+            Urls.normalizeServer(Urls.joinServer("https", "ting.example.com", "443")),
+        )
+        assertEquals(
+            "http://192.168.2.1:8686/",
+            Urls.normalizeServer(Urls.joinServer("http", "192.168.2.1", "8686")),
+        )
+    }
 }

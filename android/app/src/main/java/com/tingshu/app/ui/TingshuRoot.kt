@@ -39,18 +39,29 @@ fun TingshuRoot(vm: TingshuViewModel) {
     val sleep by vm.sleep.collectAsStateWithLifecycle()
     val needsLogin by vm.needsLogin.collectAsStateWithLifecycle()
 
-    var route by rememberSaveable { mutableStateOf("library") }
     var currentBookId by rememberSaveable { mutableStateOf("") }
     var currentCollectionId by rememberSaveable { mutableStateOf("") }
-    var previousRoute by rememberSaveable { mutableStateOf("library") }
+
+    // 用真正的返回栈，别再用「上一跳」单变量：播放器 → 书籍 → 合集 → 书架
+    // 需要一路上溯，单变量在第二次返回时就会停在原地不动。
+    // 栈存成 "|" 分隔的字符串，走 rememberSaveable 的默认 saver，旋转/回收后仍可恢复。
+    var stackText by rememberSaveable { mutableStateOf(NavStack.ROUTE_LIBRARY) }
+    val route: String = stackText.substringAfterLast('|')
 
     fun go(next: String) {
-        previousRoute = route
-        route = next
+        val stack = NavStack(stackText.split('|'))
+        stack.go(next)
+        stackText = stack.snapshot().joinToString("|")
     }
 
     fun goBack() {
-        route = previousRoute.ifBlank { "library" }
+        val stack = NavStack(stackText.split('|'))
+        stack.back()
+        stackText = stack.snapshot().joinToString("|")
+    }
+
+    fun resetToLibrary() {
+        stackText = NavStack.ROUTE_LIBRARY
     }
 
     // Android 13+ 通知权限：播放通知需要
@@ -79,7 +90,7 @@ fun TingshuRoot(vm: TingshuViewModel) {
         return
     }
 
-    BackHandler(enabled = route != "library") { goBack() }
+    BackHandler(enabled = route != NavStack.ROUTE_LIBRARY) { goBack() }
 
     val currentBook = books.firstOrNull { it.id == currentBookId }
     val playerBook = books.firstOrNull { it.id == playerState.bookId }
@@ -109,11 +120,11 @@ fun TingshuRoot(vm: TingshuViewModel) {
                         BookScreen(
                             vm = vm,
                             book = book,
-                            onBack = { route = "library" },
+                            onBack = { goBack() },
                             onOpenPlayer = { go("player") },
                         )
                     } else {
-                        LaunchedEffect(books) { route = "library" }
+                        LaunchedEffect(books) { resetToLibrary() }
                     }
                 }
 
@@ -121,7 +132,7 @@ fun TingshuRoot(vm: TingshuViewModel) {
                     CollectionScreen(
                         vm = vm,
                         collectionId = currentCollectionId,
-                        onBack = { route = "library" },
+                        onBack = { goBack() },
                         onOpenBook = { book ->
                             currentBookId = book.id
                             go("book")
@@ -160,7 +171,7 @@ fun TingshuRoot(vm: TingshuViewModel) {
 
                 "settings" -> SettingsScreen(
                     vm = vm,
-                    onBack = { route = "library" },
+                    onBack = { goBack() },
                 )
 
                 else -> LibraryScreen(

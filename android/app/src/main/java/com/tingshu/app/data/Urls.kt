@@ -73,6 +73,41 @@ object Urls {
         return sb.toString()
     }
 
+    data class ServerParts(
+        val scheme: String,
+        val host: String,
+        val port: String,
+        val path: String = "",
+    )
+
+    /**
+     * 把完整地址拆成「协议 / 主机 / 端口 / 子路径」，供设置页分栏编辑。
+     * 端口单独一栏，用户不必在手机小键盘上敲 `://` 和 `:`。
+     */
+    fun splitServer(input: String): ServerParts {
+        val s = input.trim()
+        val scheme = if (s.startsWith("https://", true)) "https" else "http"
+        val rest = when {
+            s.startsWith("https://", true) || s.startsWith("http://", true) -> s.substringAfter("://")
+            else -> s
+        }
+        val slash = rest.indexOf('/')
+        val authority = if (slash >= 0) rest.substring(0, slash) else rest
+        val path = if (slash >= 0) rest.substring(slash).trimEnd('/') else ""
+        val colon = authority.lastIndexOf(':')
+        val tail = if (colon >= 0) authority.substring(colon + 1) else ""
+        val port = if (colon >= 0 && tail.isNotEmpty() && tail.all { it.isDigit() }) tail else ""
+        val host = if (port.isNotEmpty()) authority.substring(0, colon) else authority
+        return ServerParts(scheme, host, port, path)
+    }
+
+    /** 分栏编辑后拼回完整地址；端口留空时不写冒号，由 normalizeServer 补默认值。 */
+    fun joinServer(scheme: String, host: String, port: String, path: String = ""): String {
+        val cleanHost = host.trim().trimEnd('/')
+        val authority = if (port.isBlank()) cleanHost else "$cleanHost:${port.trim()}"
+        return "$scheme://$authority$path"
+    }
+
     /** `http://192.168.1.1:8686/` → `192.168.1.1:8686`，用于界面上显示。 */
     fun hostLabel(base: String): String {
         if (base.isBlank()) return ""

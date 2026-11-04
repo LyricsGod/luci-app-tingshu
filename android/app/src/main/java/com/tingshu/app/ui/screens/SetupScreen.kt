@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingshu.app.ui.TingshuViewModel
 import com.tingshu.app.ui.components.LogoMark
+import com.tingshu.app.ui.components.ServerAddressField
 
 /**
  * 第一次打开（或断开服务器后）的引导页：手填地址或扫描局域网。
@@ -98,20 +99,10 @@ fun SetupScreen(vm: TingshuViewModel) {
             ) {
                 Text("服务器地址", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                ServerAddressField(
                     value = address,
                     onValueChange = { address = it },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = {
-                        Text(
-                            text = "例如 192.168.1.1:8686",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                            color = colors.outline,
-                        )
-                    },
-                    shape = RoundedCornerShape(14.dp),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Go,

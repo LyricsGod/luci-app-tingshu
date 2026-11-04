@@ -52,8 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingshu.app.data.ThemeMode
-import com.tingshu.app.data.Urls
 import com.tingshu.app.ui.TingshuViewModel
+import com.tingshu.app.ui.components.ServerAddressField
 import com.tingshu.app.ui.dialogs.BackupDialog
 import com.tingshu.app.ui.dialogs.PauseMarksDialog
 import com.tingshu.app.ui.dialogs.UploadDialog
@@ -84,7 +84,8 @@ fun SettingsScreen(
     val columns by vm.columns.collectAsStateWithLifecycle()
     val isAdmin = authRole == "admin"
 
-    var address by rememberSaveable(serverUrl) { mutableStateOf(Urls.hostLabel(serverUrl)) }
+    // 存完整地址（含协议/端口），分栏组件会自己拆开显示
+    var address by rememberSaveable(serverUrl) { mutableStateOf(serverUrl) }
     var showBackup by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
     var showUpload by remember { mutableStateOf(false) }
@@ -132,13 +133,10 @@ fun SettingsScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                OutlinedTextField(
+                ServerAddressField(
                     value = address,
                     onValueChange = { address = it },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("例如 192.168.1.1:8686", color = colors.outline) },
-                    shape = RoundedCornerShape(12.dp),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(

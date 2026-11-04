@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.5.6';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.5.7';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);

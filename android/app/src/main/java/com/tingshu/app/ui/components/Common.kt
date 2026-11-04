@@ -15,16 +15,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -35,13 +40,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.tingshu.app.data.Book
 import com.tingshu.app.data.Collection
+import com.tingshu.app.data.Urls
 import com.tingshu.app.playback.PlayerUiState
 
 /** 和网页端 app.js 里的 PALETTES 一样，没封面的书按标题哈希挑一组。 */
@@ -325,4 +335,93 @@ fun formatSpeed(speed: Float): String {
         String.format(java.util.Locale.US, "%.2f", speed).trimEnd('0').trimEnd('.')
     }
     return "$text×"
+}
+
+/**
+ * 服务器地址输入：协议用 chip 选，主机和端口分两栏填。
+ * 手机小键盘上敲 `://` 和 `:` 很容易漏，端口单独一栏也方便远程改成 443 等端口。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ServerAddressField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions(
+        keyboardType = KeyboardType.Uri,
+        imeAction = ImeAction.Done,
+    ),
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+) {
+    val colors = MaterialTheme.colorScheme
+    val parts = Urls.splitServer(value)
+
+    fun emit(scheme: String = parts.scheme, host: String = parts.host, port: String = parts.port) {
+        // 兼容把完整地址直接粘进主机栏：自动拆出协议和端口
+        val pasted = Urls.splitServer(host)
+        val pastedFull = host.contains("://")
+        onValueChange(
+            Urls.joinServer(
+                scheme = if (pastedFull) pasted.scheme else scheme,
+                host = pasted.host,
+                port = if (pasted.port.isNotEmpty()) pasted.port else port,
+                path = if (pastedFull) pasted.path else parts.path,
+            )
+        )
+    }
+
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "协议",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
+            listOf("http", "https").forEach { scheme ->
+                FilterChip(
+                    selected = parts.scheme == scheme,
+                    onClick = { emit(scheme = scheme) },
+                    label = { Text("$scheme://") },
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = parts.host,
+                onValueChange = { emit(host = it) },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("主机 / 域名") },
+                placeholder = {
+                    Text(
+                        text = "192.168.2.1 或域名",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                    )
+                },
+                shape = RoundedCornerShape(14.dp),
+                keyboardOptions = keyboardOptions,
+                keyboardActions = keyboardActions,
+            )
+            OutlinedTextField(
+                value = parts.port,
+                onValueChange = { emit(port = it.filter { ch -> ch.isDigit() }) },
+                modifier = Modifier.width(104.dp),
+                singleLine = true,
+                label = { Text("端口") },
+                placeholder = { Text("8686", fontFamily = FontFamily.Monospace, fontSize = 13.sp) },
+                shape = RoundedCornerShape(14.dp),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = keyboardOptions.imeAction,
+                ),
+                keyboardActions = keyboardActions,
+            )
+        }
+    }
 }
