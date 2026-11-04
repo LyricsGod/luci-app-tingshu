@@ -49,7 +49,9 @@ cd android
 
 也可以直接用 Android Studio 打开 `android/` 目录。minSdk 26（Android 8.0），targetSdk 34。
 
-Release 用的是 debug 签名（自用安装没问题）；要上架应用商店请在 `app/build.gradle.kts` 里换成自己的 keystore。
+Release 用仓库内固定的证书签名（`android/keystore/tingshu-release.jks`，配置在 `keystore.properties`）。
+本地和 CI 共用同一把钥匙，所以新版本可以直接覆盖安装升级；要上架应用商店请换成自己的 keystore，
+并改成从环境变量 / GitHub Secrets 读取密码。
 
 > 首次打开预填的地址是 `192.168.2.1:8686`，在 `ui/screens/SetupScreen.kt` 顶部的 `DEFAULT_SERVER` 里改。
 
@@ -117,7 +119,7 @@ app/src/main/java/com/tingshu/app/
 - 只支持局域网 HTTP（`usesCleartextTraffic=true`）；外网访问请走 VPN 或反向代理。
 - Android 13+ 需要授予通知权限才会显示播放通知；部分国产 ROM 还要手动允许后台运行/自启动。
 - 播放列表里的封面只用 `artworkUri`，不把 base64 塞进每条 MediaItem，避免 Binder 事务超限。
-- 当前版本号 1.5.2，APK 用 debug 签名。
+- 当前版本号 1.5.3，APK 用仓库内的固定证书签名（可直接覆盖升级）。
 
 ## 测试
 

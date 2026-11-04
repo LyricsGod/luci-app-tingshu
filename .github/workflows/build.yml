@@ -185,6 +185,18 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --console=plain
 
+      - name: 校验签名证书
+        working-directory: android
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          EXPECT=d7e93331752c33c41dc37a146ec39814c3c669e497105da92f0063c4dcd6c176
+          GOT=$("$ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner" verify --print-certs "$APK" | grep -oE '[0-9a-f]{64}')
+          echo "签名证书 SHA-256: $GOT"
+          [ "$GOT" = "$EXPECT" ] || {
+            echo "::error::APK 签名证书变了（期望 $EXPECT），用户将无法覆盖升级"
+            exit 1
+          }
+
       - name: 改名
         run: |
           mkdir -p dist

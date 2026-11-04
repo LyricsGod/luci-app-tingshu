@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.reader(Charsets.UTF_8).use { load(it) }
+}
+val hasReleaseKey = keystoreProps.getProperty("storeFile") != null
 
 android {
     namespace = "com.tingshu.app"
@@ -12,8 +20,21 @@ android {
         applicationId = "com.tingshu.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.5.2"
+        versionCode = 12
+        versionName = "1.5.3"
+    }
+
+    // 固定签名：本地和 CI 共用 android/keystore.properties 里的同一把钥匙，
+    // 这样每次 Release 的 APK 签名一致，可以直接覆盖安装升级。
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -23,9 +44,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // 个人局域网 App：release 直接用 debug 签名，装到手机上就能跑。
-            // 要上架应用商店时再换成自己的 keystore。
-            signingConfig = signingConfigs.getByName("debug")
+            // 没有 keystore.properties 时退回 debug 签名，保证 fork 也能直接打包
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
