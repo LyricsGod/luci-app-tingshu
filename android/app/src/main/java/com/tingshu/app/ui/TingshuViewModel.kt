@@ -17,6 +17,7 @@ import androidx.media3.common.Player
 import com.tingshu.app.TingshuApp
 import com.tingshu.app.data.ArchiveImporter
 import com.tingshu.app.data.Book
+import com.tingshu.app.data.ChapterMarks
 import com.tingshu.app.data.Collection
 import com.tingshu.app.data.Hex
 import com.tingshu.app.data.PauseMark
@@ -905,6 +906,47 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    /* ---------------- 已读状态：全本 / 多章批量 ---------------- */
+
+    /**
+     * 批量改章节的「已读完」标记。
+     * 全本未读时顺手把播放位置清零，否则进度条还停在半路；
+     * 正在放这本书的话不动位置，免得和播放器打架。
+     */
+    fun setChaptersDone(book: Book, indices: Iterable<Int>, done: Boolean) {
+        val valid = indices.filter { it in book.tracks.indices }.toSet()
+        if (valid.isEmpty()) return
+
+        val current = progress.value[book.id] ?: Progress()
+        val nextDone = ChapterMarks.apply(current.done, valid, done, book.tracks.size)
+        val clearingAll = !done && valid.size >= book.tracks.size
+        val activelyPlaying = playerState.value.bookId == book.id && playerState.value.isPlaying
+        val resetPos = clearingAll && !activelyPlaying
+
+        val updated = current.copy(
+            index = if (resetPos) 0 else current.index,
+            time = if (resetPos) 0.0 else current.time,
+            done = nextDone,
+            updatedAt = System.currentTimeMillis(),
+        )
+        progress.value = progress.value + (book.id to updated)
+        progressStore.save(progress.value)
+        pushProgress(book.id, updated, force = true)
+
+        messages.tryEmit(
+            when {
+                clearingAll -> "已把全书标为未读"
+                valid.size >= book.tracks.size && done -> "已把全书 ${book.chapterCount} 章标为已读"
+                done -> "已把 ${valid.size} 章标为已读"
+                else -> "已把 ${valid.size} 章标为未读"
+            }
+        )
+    }
+
+    fun markAllChaptersRead(book: Book) = setChaptersDone(book, book.tracks.indices.toList(), true)
+
+    fun markAllChaptersUnread(book: Book) = setChaptersDone(book, book.tracks.indices.toList(), false)
 
     /* ---------------- 编辑 / 删除书籍 ---------------- */
 

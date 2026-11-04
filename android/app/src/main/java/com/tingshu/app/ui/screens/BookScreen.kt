@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,7 +38,10 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,11 +51,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,6 +116,10 @@ fun BookScreen(
     var showMarks by remember { mutableStateOf(false) }
     var showCollections by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmUnread by remember { mutableStateOf(false) }
+    // 章节多选：批量标已读 / 未读
+    var selecting by rememberSaveable(book.id) { mutableStateOf(false) }
+    var selected by remember(book.id) { mutableStateOf(setOf<Int>()) }
 
     val chapterListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -199,7 +210,7 @@ fun BookScreen(
         LazyColumn(
             state = chapterListState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 32.dp, end = 34.dp),
+            contentPadding = PaddingValues(bottom = if (selecting) 118.dp else 32.dp, end = 34.dp),
         ) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
@@ -345,22 +356,41 @@ fun BookScreen(
 
             item {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = { showMarks = true }) {
+                    val tight = PaddingValues(horizontal = 8.dp)
+                    TextButton(onClick = { showMarks = true }, contentPadding = tight) {
                         Icon(Icons.Rounded.Timer, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("暂停记录", fontSize = 12.sp)
                     }
+                    TextButton(
+                        onClick = { vm.markAllChaptersRead(book) },
+                        enabled = book.chapterCount > 0,
+                        contentPadding = tight,
+                    ) {
+                        Text("全本已读", fontSize = 12.sp)
+                    }
+                    TextButton(
+                        onClick = { confirmUnread = true },
+                        enabled = book.chapterCount > 0,
+                        contentPadding = tight,
+                    ) {
+                        Text("全本未读", fontSize = 12.sp)
+                    }
                     if (isAdmin) {
-                        TextButton(onClick = { showEdit = true }) {
+                        TextButton(onClick = { showEdit = true }, contentPadding = tight) {
                             Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("编辑资料", fontSize = 12.sp)
                         }
                     }
-                    TextButton(onClick = { showCollections = true }) {
+                    TextButton(onClick = { showCollections = true }, contentPadding = tight) {
                         Icon(Icons.Rounded.Folder, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(if (collection == null) "加入合集" else "合集", fontSize = 12.sp)
@@ -395,6 +425,14 @@ fun BookScreen(
                         color = colors.onSurfaceVariant,
                     )
                     Spacer(Modifier.weight(1f))
+                    TextButton(onClick = {
+                        selecting = !selecting
+                        selected = emptySet()
+                    }) {
+                        Icon(Icons.Rounded.Check, null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(2.dp))
+                        Text(if (selecting) "完成" else "多选", fontSize = 12.sp)
+                    }
                     TextButton(onClick = { ascending = !ascending }) {
                         Icon(Icons.Rounded.SwapVert, null, Modifier.size(15.dp))
                         Spacer(Modifier.width(2.dp))
@@ -413,9 +451,16 @@ fun BookScreen(
                     current = isPlayingThis,
                     done = done,
                     playing = isPlayingThis && playing,
+                    selecting = selecting,
+                    selected = selected.contains(actualIndex),
                     onClick = {
-                        vm.playBook(book, startIndex = actualIndex, fromBeginning = true)
-                        onOpenPlayer()
+                        if (selecting) {
+                            // 多选时点章节只是勾选，不播放
+                            selected = if (selected.contains(actualIndex)) selected - actualIndex else selected + actualIndex
+                        } else {
+                            vm.playBook(book, startIndex = actualIndex, fromBeginning = true)
+                            onOpenPlayer()
+                        }
                     },
                 )
             }
@@ -440,8 +485,56 @@ fun BookScreen(
                         .fillMaxHeight(),
                 )
             }
+
+            if (selecting) {
+                SelectionBar(
+                    selectedCount = selected.size,
+                    total = book.chapterCount,
+                    onToggleAll = {
+                        selected = if (selected.size >= book.chapterCount) {
+                            emptySet()
+                        } else {
+                            book.tracks.indices.toSet()
+                        }
+                    },
+                    onMarkRead = {
+                        vm.setChaptersDone(book, selected, true)
+                        selected = emptySet()
+                        selecting = false
+                    },
+                    onMarkUnread = {
+                        vm.setChaptersDone(book, selected, false)
+                        selected = emptySet()
+                        selecting = false
+                    },
+                    onClose = {
+                        selecting = false
+                        selected = emptySet()
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
         }
         }
+    }
+
+    if (confirmUnread) {
+        AlertDialog(
+            onDismissRequest = { confirmUnread = false },
+            title = { Text("全本标为未读") },
+            text = {
+                Text("把《${book.title}》全部 ${book.chapterCount} 章标为未读，并清除收听位置？")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmUnread = false
+                    vm.markAllChaptersUnread(book)
+                }) { Text("标为未读") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnread = false }) { Text("取消") }
+            },
+        )
     }
 
     if (showEdit) {
@@ -527,12 +620,15 @@ private fun ChapterRow(
     current: Boolean,
     done: Boolean,
     playing: Boolean,
+    selecting: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(if (selected) colors.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -576,13 +672,77 @@ private fun ChapterRow(
                 )
             }
         }
-        if (current) {
+        if (selecting) {
+            Checkbox(
+                checked = selected,
+                onCheckedChange = null,
+                colors = CheckboxDefaults.colors(checkedColor = colors.primary),
+            )
+        } else if (current) {
             Icon(
                 imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = null,
                 tint = colors.primary,
                 modifier = Modifier.size(18.dp),
             )
+        }
+    }
+}
+
+/** 多选时的底部操作条：已选 N 章 + 全选 + 标为已读 / 未读 */
+@Composable
+private fun SelectionBar(
+    selectedCount: Int,
+    total: Int,
+    onToggleAll: () -> Unit,
+    onMarkRead: () -> Unit,
+    onMarkUnread: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = colors.surfaceContainerHigh,
+        shadowElevation = 8.dp,
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (selectedCount > 0) "已选 $selectedCount / $total 章" else "勾选要操作的章节",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onToggleAll) {
+                    Text(if (selectedCount >= total) "取消全选" else "全选", fontSize = 12.sp)
+                }
+                TextButton(onClick = onClose) {
+                    Text("完成", fontSize = 12.sp)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = onMarkRead,
+                    enabled = selectedCount > 0,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("标为已读", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = onMarkUnread,
+                    enabled = selectedCount > 0,
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("标为未读", maxLines = 1)
+                }
+            }
         }
     }
 }

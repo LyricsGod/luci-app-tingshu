@@ -134,6 +134,7 @@ const routes = {
 
 /* 记录推送出去的请求体，用来核对数据字段（例如暂停记录的来源标记） */
 const pushedBodies = [];
+const progressPushes = [];
 const requests = [];
 
 w.fetch = (input, init) => {
@@ -141,6 +142,9 @@ w.fetch = (input, init) => {
   requests.push({ url, init: init || null });
   if (init && init.body && typeof init.body === 'string' && url.includes('cgi-ts/pausemarks')) {
     try { pushedBodies.push(JSON.parse(init.body)); } catch { /* 忽略 */ }
+  }
+  if (init && init.body && typeof init.body === 'string' && url.includes('cgi-ts/progress')) {
+    progressPushes.push(init.body);
   }
   const key = Object.keys(routes).find((k) => url.startsWith(k));
   const body = key ? routes[key] : { ok: true };
@@ -282,6 +286,61 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
 
   press('Escape');
   check('Esc 关闭暂停记录', $('#pausemarksSheet').hidden);
+
+  /* ---- 全本已读 / 全本未读 ---- */
+  const tools = $('#trackTools');
+  check('目录工具条有「全本已读 / 全本未读 / 多选」', !!tools.querySelector('[data-act="readAll"]')
+    && !!tools.querySelector('[data-act="unreadAll"]') && !!tools.querySelector('[data-act="selStart"]'));
+
+  click(tools.querySelector('[data-act="readAll"]'));
+  await new Promise((r) => setTimeout(r, 80));
+  // 当前播放的那章显示 ♪，所以「已读」要看 done / playing 两种标记
+  const marked = (i) => {
+    const li = $$('#trackList .track-item')[i];
+    return !!li && (li.classList.contains('done') || li.classList.contains('playing'));
+  };
+  check('全本已读后 3 章都带已读标记', marked(0) && marked(1) && marked(2));
+  check('全本已读会推送进度到服务器', /d=0,1,2(?:&|$)/.test(progressPushes[progressPushes.length - 1] || ''));
+  check('全本已读后进度显示已听完', /已听完/.test($('#bookPct').textContent));
+  check('全本已读后播放按钮变成重新收听', $('#bookPlayLabel').textContent === '重新收听');
+
+  w.confirm = () => true;
+  click(tools.querySelector('[data-act="unreadAll"]'));
+  await new Promise((r) => setTimeout(r, 80));
+  check('全本未读后没有已读章节', !marked(1) && !marked(2));
+  check('全本未读会推送空的 done', /d=(?:&|$)/.test(progressPushes[progressPushes.length - 1] || ''));
+  check('全本未读后进度回到 0%', /^0%/.test($('#bookPct').textContent));
+
+  /* ---- 章节多选：勾几章批量标已读 / 未读 ---- */
+  click(tools.querySelector('[data-act="selStart"]'));
+  check('进入多选模式后每章前面有勾选框', $$('#trackList .track-item .t-check').length === 3);
+  let rows = $$('#trackList .track-item');
+  const srcBefore = $('#audio').src;
+  click(rows[0]);
+  click(rows[2]);
+  check('点章节只是勾选，不会开始播放', $('#audio').src === srcBefore);
+  check('工具条显示已选 2 章', /已选 2 \/ 3/.test(tools.textContent));
+  check('勾中的章节有选中样式', $$('#trackList .track-item.selected').length === 2);
+
+  click(tools.querySelector('[data-act="selRead"]'));
+  await new Promise((r) => setTimeout(r, 80));
+  check('多选标已读只影响勾中的章节', /d=0,2(?:&|$)/.test(progressPushes[progressPushes.length - 1] || ''));
+  check('标完已读会退出多选模式', $$('#trackList .track-item .t-check').length === 0);
+  check('批量标已读后勾中的章节显示已读', marked(0) && marked(2) && !marked(1));
+
+  click(tools.querySelector('[data-act="selStart"]'));
+  rows = $$('#trackList .track-item');
+  click(rows[0]);
+  click(tools.querySelector('[data-act="selUnread"]'));
+  await new Promise((r) => setTimeout(r, 80));
+  check('多选标未读会去掉勾中的章节', /d=2(?:&|$)/.test(progressPushes[progressPushes.length - 1] || ''));
+  check('标未读后另一章还是已读', !marked(1) && marked(2));
+
+  click(tools.querySelector('[data-act="selStart"]'));
+  click(tools.querySelector('[data-act="selAll"]'));
+  check('全选按钮选中全部章节', $$('#trackList .track-item.selected').length === 3);
+  click(tools.querySelector('[data-act="selExit"]'));
+  check('点完成退出多选模式', $$('#trackList .track-item .t-check').length === 0);
 
   click($('#backBtn'));
   check('返回书架', $('#bookView').hidden && !$('#libraryView').hidden);

@@ -405,6 +405,26 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
 .track-item.playing .t-name { color: var(--text); font-weight: 550; }
 .track-item.done .t-name { color: var(--muted); }
 
+/* 目录工具条：全本已读 / 全本未读 / 多选 */
+.track-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 20px 0 6px; padding: 0 4px;
+}
+.track-tools .tt-title { font-family: var(--serif); font-size: 16px; letter-spacing: .02em; }
+.track-tools .tt-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.track-tools .tt-gap { flex: 1; min-width: 4px; }
+.track-tools .btn[disabled] { opacity: .45; cursor: default; }
+
+/* 多选时每章前面的勾选框 */
+.track-item .t-check {
+  width: 18px; height: 18px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--line); display: grid; place-items: center;
+  color: transparent; transition: .15s;
+}
+.track-item .t-check svg { width: 12px; height: 12px; }
+.track-item.selected { background: var(--accent-soft); border-color: var(--accent-line); }
+.track-item.selected .t-check { background: var(--accent); border-color: var(--accent); color: #fff8f2; }
+
 /* ---------------- 迷你播放器 ---------------- */
 
 .mini {

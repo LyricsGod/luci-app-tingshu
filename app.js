@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.5';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.6';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -110,6 +110,7 @@
     bookRestartBtn: $('#bookRestartBtn'),
     bookDesc: $('#bookDesc'),
     editBookBtn: $('#editBookBtn'),
+    trackTools: $('#trackTools'),
     trackList: $('#trackList'),
     // 编辑弹窗
     editSheet: $('#editSheet'),
@@ -244,6 +245,9 @@
     scrubbing: false,
     playedOnce: false,    // 本次会话是否真的播放过（用于判断是否推送进度）
   };
+
+  // 章节多选（批量标已读 / 未读）：只在书籍详情页里用
+  const trackSel = { mode: false, bookId: '', ids: new Set(), anchor: null };
 
   // 播放器相关的临时状态（不进 state：这些值不需要被渲染逻辑读取）
   let objectUrl = null;
@@ -1068,6 +1072,7 @@
 
   function goLibrary() {
     state.bookView = null;
+    resetTrackSel();
     el.bookView.hidden = true;
     el.libraryView.hidden = false;
     el.pageScroll.scrollTop = 0;
@@ -1075,6 +1080,14 @@
   }
 
   function renderBookView(book) {
+    // 换书时把多选状态清掉，避免把上一本的选中项带过来
+    if (trackSel.bookId !== book.id) {
+      trackSel.mode = false;
+      trackSel.ids.clear();
+      trackSel.anchor = null;
+      trackSel.bookId = book.id;
+    }
+
     paintCover(el.bookCover, book, 6);
     el.bookTitle.textContent = book.title;
     el.bookTitle.title = book.title !== book.folderTitle ? `原文件夹：${book.folderTitle}` : '';
@@ -1092,6 +1105,7 @@
     el.bookRestartBtn.hidden = !hasProgress;
 
     updateBookStats(book);
+    renderTrackTools(book);
     renderTrackList(book);
     updateBookMeta(book);
   }
@@ -1124,11 +1138,157 @@
     }
   }
 
+  /* ---------- 章节多选：批量标已读 / 未读 ---------- */
+
+  function trackSelecting(book) {
+    return trackSel.mode && (!book || trackSel.bookId === book.id);
+  }
+
+  function renderTrackTools(book) {
+    if (!el.trackTools) return;
+    const selecting = trackSelecting(book);
+    const n = book ? book.tracks.length : 0;
+    const p = book ? progressOf(book.id) : null;
+    const doneN = p ? new Set((p.done || []).filter(i => i >= 0 && i < n)).size : 0;
+
+    const frag = document.createDocumentFragment();
+    const add = (tag, cls, text) => {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text != null) node.textContent = text;
+      frag.appendChild(node);
+      return node;
+    };
+
+    add('span', 'tt-title', '目录');
+    add('span', 'tt-count', selecting
+      ? `已选 ${trackSel.ids.size} / ${n} 章`
+      : `${n} 章${doneN ? ` · 已读 ${doneN}` : ''}`);
+    add('span', 'tt-gap');
+
+    if (selecting) {
+      add('button', 'btn ghost small', trackSel.ids.size >= n ? '取消全选' : '全选').dataset.act = 'selAll';
+      const read = add('button', 'btn primary small', '标为已读');
+      read.dataset.act = 'selRead';
+      read.disabled = !trackSel.ids.size;
+      const unread = add('button', 'btn ghost small', '标为未读');
+      unread.dataset.act = 'selUnread';
+      unread.disabled = !trackSel.ids.size;
+      add('button', 'btn ghost small', '完成').dataset.act = 'selExit';
+    } else {
+      add('button', 'btn ghost small', '全本已读').dataset.act = 'readAll';
+      add('button', 'btn ghost small', '全本未读').dataset.act = 'unreadAll';
+      add('button', 'btn ghost small', '多选').dataset.act = 'selStart';
+    }
+
+    el.trackTools.replaceChildren(frag);
+  }
+
+  function resetTrackSel() {
+    trackSel.mode = false;
+    trackSel.ids.clear();
+    trackSel.anchor = null;
+  }
+
+  function setTrackSelMode(on) {
+    const book = state.bookView;
+    if (!book) return;
+    trackSel.bookId = book.id;
+    trackSel.mode = !!on;
+    trackSel.ids.clear();
+    trackSel.anchor = null;
+    renderTrackTools(book);
+    renderTrackList(book);
+  }
+
+  function paintTrackSel(book) {
+    const items = el.trackList.children;
+    for (let k = 0; k < items.length; k++) {
+      const i = parseInt(items[k].dataset.i, 10);
+      const on = trackSel.ids.has(i);
+      items[k].classList.toggle('selected', on);
+      items[k].setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    renderTrackTools(book);
+  }
+
+  /** 点一下切换某一章；按住 Shift 点可以整段选上 */
+  function toggleTrackSel(book, i, range = false) {
+    if (!trackSel.mode) return;
+    if (range && trackSel.anchor != null && trackSel.anchor !== i) {
+      const from = Math.min(trackSel.anchor, i);
+      const to = Math.max(trackSel.anchor, i);
+      const on = !trackSel.ids.has(i);
+      for (let k = from; k <= to; k++) {
+        if (on) trackSel.ids.add(k);
+        else trackSel.ids.delete(k);
+      }
+    } else if (trackSel.ids.has(i)) {
+      trackSel.ids.delete(i);
+    } else {
+      trackSel.ids.add(i);
+    }
+    trackSel.anchor = i;
+    paintTrackSel(book);
+  }
+
+  /**
+   * 批量改「已读」状态。indices 传全书下标就是全本操作。
+   * 全本未读时会顺手把播放位置清零，否则进度条还停在半路。
+   */
+  function applyChaptersDone(book, indices, done, opts = {}) {
+    const n = book.tracks.length;
+    const ids = Array.from(new Set(indices)).filter(i => Number.isInteger(i) && i >= 0 && i < n);
+    if (!ids.length) return;
+
+    const p = ensureProgress(book.id);
+    const set = new Set((p.done || []).filter(i => i >= 0 && i < n));
+    let changed = 0;
+    ids.forEach(i => {
+      if (done) {
+        if (!set.has(i)) { set.add(i); changed++; }
+      } else if (set.delete(i)) {
+        changed++;
+      }
+    });
+
+    const wholeBook = ids.length >= n;
+    const needReset = !done && wholeBook && ((p.index || 0) > 0 || (p.time || 0) > 1);
+    if (!changed && !needReset) {
+      toast(done ? '这些章节本来就是已读' : '这些章节本来就是未读', 1400);
+      return;
+    }
+
+    const activelyPlaying = state.current && state.current.book.id === book.id && !el.audio.paused;
+    p.done = Array.from(set).sort((a, b) => a - b);
+    if (needReset && !activelyPlaying) { p.index = 0; p.time = 0; }
+    p.updatedAt = Date.now();
+
+    state.progress.set(book.id, p);
+    dbPut('progress', p).catch(() => {});
+    pushServerProgress(book.id, p, true);
+
+    if (state.bookView && state.bookView.id === book.id) {
+      const st = bookStats(book);
+      const hasProgress = (p.time || 0) > 1 || p.done.length > 0;
+      el.bookPlayLabel.textContent = st.finished ? '重新收听' : hasProgress ? '继续收听' : '开始收听';
+      el.bookRestartBtn.hidden = !hasProgress;
+      updateBookStats(book);
+      updateBookMeta(book);
+      renderTrackTools(book);
+      renderTrackList(book);
+    }
+    if (!el.libraryView.hidden) renderLibrary();
+    if (opts.exitSelect) setTrackSelMode(false);
+    if (opts.toastMsg) toast(opts.toastMsg);
+  }
+
   function renderTrackList(book) {
     const p = progressOf(book.id);
     const done = new Set((p && p.done) || []);
     const freq = document.createDocumentFragment();
     const isCurrentBook = state.current && state.current.book.id === book.id;
+    const selecting = trackSelecting(book);
 
     book.tracks.forEach((track, i) => {
       const li = document.createElement('li');
@@ -1138,6 +1298,18 @@
       const playing = isCurrentBook && state.current.index === i;
       if (playing) li.classList.add('playing');
       else if (done.has(i)) li.classList.add('done');
+      if (selecting) {
+        li.classList.add('selecting');
+        if (trackSel.ids.has(i)) li.classList.add('selected');
+        li.setAttribute('aria-selected', trackSel.ids.has(i) ? 'true' : 'false');
+      }
+
+      if (selecting) {
+        const chk = document.createElement('span');
+        chk.className = 't-check';
+        chk.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg>';
+        li.appendChild(chk);
+      }
 
       const num = document.createElement('span');
       num.className = 't-idx';
@@ -4316,6 +4488,42 @@
     el.bookDesc.addEventListener('click', () => {
       if (!el.bookDesc.hidden) el.bookDesc.classList.toggle('open');
     });
+
+    /* 目录工具条：全本已读 / 全本未读 / 多选，以及多选时的批量操作 */
+    el.trackTools.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-act]');
+      const book = state.bookView;
+      if (!btn || !book) return;
+      const n = book.tracks.length;
+      const act = btn.dataset.act;
+
+      if (act === 'selStart') { setTrackSelMode(true); return; }
+      if (act === 'selExit') { setTrackSelMode(false); return; }
+      if (act === 'selAll') {
+        if (trackSel.ids.size >= n) trackSel.ids.clear();
+        else for (let i = 0; i < n; i++) trackSel.ids.add(i);
+        paintTrackSel(book);
+        return;
+      }
+      if (act === 'selRead' || act === 'selUnread') {
+        const ids = Array.from(trackSel.ids);
+        if (!ids.length) { toast('先选几章', 1400); return; }
+        const read = act === 'selRead';
+        applyChaptersDone(book, ids, read, {
+          exitSelect: true,
+          toastMsg: `已把 ${ids.length} 章标为${read ? '已读' : '未读'}`,
+        });
+        return;
+      }
+      if (act === 'readAll') {
+        applyChaptersDone(book, Array.from({ length: n }, (_, i) => i), true, { toastMsg: `已把全书 ${n} 章标为已读` });
+        return;
+      }
+      if (act === 'unreadAll') {
+        if (!window.confirm(`把《${book.title}》全部 ${n} 章标为未读，并清除收听位置？`)) return;
+        applyChaptersDone(book, Array.from({ length: n }, (_, i) => i), false, { toastMsg: '已把全书标为未读' });
+      }
+    });
   }
 
   /* 编辑书籍：书名、简介、配色、封面、裁切 */
@@ -4607,6 +4815,8 @@
       const book = state.bookView;
       if (!li || !book) return;
       const i = parseInt(li.dataset.i, 10);
+      // 多选模式：点章节只是勾选，不触发播放
+      if (trackSel.mode) { toggleTrackSel(book, i, e.shiftKey); return; }
       if (state.current && state.current.book.id === book.id && state.current.index === i) {
         togglePlay();
         renderTrackList(book);
