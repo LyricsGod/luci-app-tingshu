@@ -46,6 +46,23 @@ jobs:
             echo "ok  $f"
           done
 
+      - name: init 脚本自检
+        run: |
+          # 反斜杠续行一旦落成字面的 \n，uhttpd 会收到多余参数 n，-I/-x 全部失效（1.5.0 就是这样挂的）
+          if grep -qF -- '\n' openwrt/files/etc/init.d/tingshu; then
+            echo "::error::init.d 里出现了字面的反斜杠+n，检查 procd_set_param command 那一行"
+            exit 1
+          fi
+          grep -qF -- '-x /cgi-ts' openwrt/files/etc/init.d/tingshu || {
+            echo "::error::init.d 缺少 -x /cgi-ts，CGI 会被当成静态文件"
+            exit 1
+          }
+          grep -qF -- '-I index.html' openwrt/files/etc/init.d/tingshu || {
+            echo "::error::init.d 缺少 -I index.html"
+            exit 1
+          }
+          echo 'init.d 参数检查通过'
+
       - name: Python 语法
         run: |
           python3 -m py_compile build_ipk.py
