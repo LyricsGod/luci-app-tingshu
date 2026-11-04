@@ -12,8 +12,8 @@ android {
         applicationId = "com.tingshu.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.5.1"
+        versionCode = 11
+        versionName = "1.5.2"
     }
 
     buildTypes {
@@ -42,6 +42,11 @@ android {
         compose = true
         // AGP 8 默认不再生成 BuildConfig；设置页要用 BuildConfig.VERSION_NAME 显示版本
         buildConfig = true
+    }
+
+    testOptions {
+        // 单元测试跑在 JVM 上，android.util.Log 等桩方法返回默认值而不是抛异常
+        unitTests.isReturnDefaultValues = true
     }
 
     lint {

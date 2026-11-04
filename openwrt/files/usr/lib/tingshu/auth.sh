@@ -18,7 +18,7 @@
 # 其余中间变量一律 local，避免把调用方的变量冲掉。
 #
 
-. /usr/lib/tingshu/http.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/http.sh"
 
 TS_USERS_DIR="${TINGSHU_USERS_DIR:-/etc/tingshu/users}"
 TS_SESSION_DIR="${TINGSHU_SESSIONS_DIR:-/tmp/tingshu-sessions}"

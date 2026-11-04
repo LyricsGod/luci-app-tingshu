@@ -8,7 +8,7 @@
 #   POST /cgi-ts/users?action=delete   u=
 #
 
-. /usr/lib/tingshu/auth.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
 ts_require_admin
 
 method="${REQUEST_METHOD:-GET}"

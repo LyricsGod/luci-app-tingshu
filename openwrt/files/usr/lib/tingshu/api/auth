@@ -9,7 +9,7 @@
 #   POST /cgi-ts/auth?action=password  old=&p=   修改自己的密码
 #
 
-. /usr/lib/tingshu/auth.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
 
 method="${REQUEST_METHOD:-GET}"
 body=""

@@ -1,5 +1,8 @@
 package com.tingshu.app.data
 
+import android.util.Log
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.text.Collator
 import java.util.Locale
 
@@ -9,19 +12,42 @@ class LibraryRepository(
     private val covers: CoverStore,
 ) {
 
-    suspend fun load(base: String): LibrarySnapshot {
-        val raw = api.fetchLibrary(base)
-        // meta / collections 拉不到不算致命：书还是能听
-        val meta = runCatching { api.fetchMeta(base) }.getOrDefault(emptyMap())
+    /**
+     * 三个接口并发拉取。以前是串行 await，弱网下 library(500KB) + meta(1MB) + 合集
+     * 的耗时是相加的，连接时就要转好几秒；并发后总耗时取决于最慢的那个。
+     *
+     * meta / collections 拉不到不算致命（书还是能听），但必须留下日志——
+     * 之前用 runCatching 静默吞掉，自定义封面消失时完全查不到原因。
+     */
+    suspend fun load(base: String): LibrarySnapshot = coroutineScope {
+        val libraryJob = async { api.fetchLibrary(base) }
+        val metaJob = async { fetchMetaSafely(base) }
+        val collectionsJob = async { fetchCollectionsSafely(base) }
+
+        val raw = libraryJob.await()
+        val meta = metaJob.await()
+        val collections = collectionsJob.await()
 
         val collator = Collator.getInstance(Locale.CHINA)
         val books = raw.books
             .mapNotNull { toBook(base, it, meta) }
             .sortedWith(Comparator { a, b -> collator.compare(a.title, b.title) })
 
-        val collections = runCatching { api.fetchCollections(base) }.getOrNull()
-        return LibrarySnapshot(books, collections, raw.root, raw.error)
+        val withCover = books.count { it.coverFile != null || it.coverUrl != null }
+        Log.i(TAG, "load 完成: ${books.size} 本 / meta ${meta.size} 条 / 有封面 $withCover 本")
+
+        LibrarySnapshot(books, collections, raw.root, raw.error)
     }
+
+    private suspend fun fetchMetaSafely(base: String): Map<String, MetaRecord> =
+        runCatching { api.fetchMeta(base) }
+            .onFailure { Log.w(TAG, "meta 拉取失败: ${it.javaClass.simpleName} ${it.message}") }
+            .getOrDefault(emptyMap())
+
+    private suspend fun fetchCollectionsSafely(base: String): List<Collection>? =
+        runCatching { api.fetchCollections(base) }
+            .onFailure { Log.w(TAG, "collections 拉取失败: ${it.javaClass.simpleName} ${it.message}") }
+            .getOrNull()
 
     private fun toBook(base: String, raw: TingshuApi.RawBook, meta: Map<String, MetaRecord>): Book? {
         val id = "net:" + raw.id
@@ -34,7 +60,13 @@ class LibraryRepository(
             .map { Track(cleanTrackTitle(it.title), it.path, Urls.media(base, it.path)) }
         if (tracks.isEmpty()) return null
 
-        val coverFile = m?.coverBase64?.let { covers.save(hex, it) }
+        val coverFile = m?.coverBase64?.takeIf { it.isNotBlank() }?.let { b64 ->
+            covers.save(hex, b64).also {
+                if (it == null) {
+                    Log.w(TAG, "自定义封面解码/落盘失败: ${raw.title} (${b64.length} 字符)")
+                }
+            }
+        }
         val folderCover = raw.cover?.takeIf { it.isNotBlank() }?.let { Urls.media(base, it) }
 
         return Book(
@@ -48,5 +80,9 @@ class LibraryRepository(
             coverUrl = folderCover,
             tracks = tracks,
         )
+    }
+
+    private companion object {
+        const val TAG = "TingshuLib"
     }
 }

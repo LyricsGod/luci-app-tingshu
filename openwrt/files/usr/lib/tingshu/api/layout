@@ -6,7 +6,7 @@
 #   POST /cgi-ts/layout   → body 是 JSON 对象，例如 {"columns":3}
 #
 
-. /usr/lib/tingshu/auth.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
 ts_require_auth
 
 DATA_FILE="$TS_USERS_DIR/$TS_USER/layout.json"
@@ -27,6 +27,7 @@ if [ "$method" = "POST" ]; then
 fi
 
 # ---- GET ----
+ts_header
 if [ -f "$DATA_FILE" ]; then
 	printf '{"ok":true,"layout":'
 	cat "$DATA_FILE"

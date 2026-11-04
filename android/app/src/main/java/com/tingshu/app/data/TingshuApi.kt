@@ -1,5 +1,7 @@
 package com.tingshu.app.data
 
+import android.util.Log
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -23,6 +25,10 @@ import java.util.Locale
  *  - POST cgi-ts/manage?action=rescan      重扫书库
  */
 class TingshuApi(private val tokenProvider: () -> String? = { null }) {
+
+    private companion object {
+        const val TAG = "TingshuApi"
+    }
 
     class ApiException(val code: Int, message: String) : IOException(message)
 
@@ -444,6 +450,7 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         contentType: String? = null,
         timeoutMs: Int = 12000,
     ): String {
+        val startedAt = System.nanoTime()
         val conn = openConnection(url, method, timeoutMs, timeoutMs * 2)
         try {
             conn.setRequestProperty("Accept", "application/json, */*")
@@ -454,11 +461,25 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
                 conn.setFixedLengthStreamingMode(body.size)
                 conn.outputStream.use { it.write(body) }
             }
-            return readResponse(conn)
+            val text = readResponse(conn)
+            logDone(method, url, text.length, startedAt)
+            return text
+        } catch (t: Throwable) {
+            Log.w(TAG, "$method ${shortUrl(url)} 失败(${elapsedMs(startedAt)}ms): ${t.javaClass.simpleName} ${t.message}")
+            throw t
         } finally {
             conn.disconnect()
         }
     }
+
+    private fun logDone(method: String, url: String, bytes: Int, startedAt: Long) {
+        Log.d(TAG, "$method ${shortUrl(url)} -> ${bytes}B, ${elapsedMs(startedAt)}ms")
+    }
+
+    private fun elapsedMs(startedAt: Long) = (System.nanoTime() - startedAt) / 1_000_000
+
+    /** 日志里只保留末段路径，避免把 base 和 hex id 全打出来 */
+    private fun shortUrl(url: String): String = url.substringAfter("://", url).substringAfter('/', "")
 
     /** 从本地文件流式上传，避免把几十 MB 音频整个读进内存。 */
     private fun uploadStream(

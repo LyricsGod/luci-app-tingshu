@@ -63,6 +63,9 @@ jobs:
           }
           echo 'init.d 参数检查通过'
 
+      - name: CGI 冒烟测试
+        run: python3 test/cgi-smoke.py
+
       - name: Python 语法
         run: |
           python3 -m py_compile build_ipk.py

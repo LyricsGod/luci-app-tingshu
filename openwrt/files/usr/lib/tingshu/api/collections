@@ -9,7 +9,7 @@
 # 合集数量少、且总是整体读写，所以用单个文件存整个列表。
 #
 
-. /usr/lib/tingshu/auth.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
 ts_require_auth
 
 DATA_FILE="${TINGSHU_COLLECTIONS_FILE:-$TS_USERS_DIR/$TS_USER/collections.json}"
@@ -35,6 +35,7 @@ if [ "$method" = "POST" ]; then
 fi
 
 # ---- GET ----
+ts_header
 if [ -f "$DATA_FILE" ]; then
 	printf '{"ok":true,"data":'
 	cat "$DATA_FILE"

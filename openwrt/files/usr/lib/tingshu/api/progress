@@ -10,7 +10,7 @@
 # 书 id 由前端转成十六进制，这里只接受 [0-9a-f]，避免任何路径/注入问题。
 #
 
-. /usr/lib/tingshu/auth.sh
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
 ts_require_auth
 
 DATA_DIR="${TINGSHU_PROGRESS_DIR:-$TS_USERS_DIR/$TS_USER/progress}"
@@ -45,6 +45,7 @@ one="$(ts_param "${QUERY_STRING:-}" b)"
 
 if [ -n "$one" ]; then
 	ts_is_hex "$one" || ts_fail 400 "bad id"
+	ts_header
 	if [ -f "$DATA_DIR/$one.json" ]; then
 		printf '{"ok":true,"items":{"%s":' "$one"
 		cat "$DATA_DIR/$one.json"
@@ -55,6 +56,7 @@ if [ -n "$one" ]; then
 	exit 0
 fi
 
+ts_header
 printf '{"ok":true,"items":{'
 first=1
 for f in "$DATA_DIR"/*.json; do
