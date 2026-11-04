@@ -1,5 +1,8 @@
 /* ===========================================================
-   听书 · 本地离线书架
+   听书 · 网页书架样式
+   约定：
+     - 颜色 / 圆角 / 阴影一律走 :root 变量，主题只覆盖变量
+     - 小节顺序：变量 → 基础 → 顶栏 → 书架 → 播放器 → 弹窗 → 响应式
    =========================================================== */
 
 :root {
@@ -13,12 +16,20 @@
   --text-2: #4d453b;
   --muted: #8a8072;
   --accent: #b4643c;
+  --accent-2: #8f5c3c;
   --accent-soft: #f2e2d6;
   --accent-line: #e6c9b4;
+  --danger: #b23b2e;
+  --danger-soft: rgba(178, 59, 46, .1);
+  --warn: #f4e3c8;
+  --warn-ink: #7a4b12;
+  --warn-line: #e4c79d;
+  --overlay: rgba(26, 20, 14, .44);
+  --toast-bg: #2a231b;
+  --toast-fg: #f8f1e6;
   --shadow-sm: 0 1px 2px rgba(60, 44, 28, .06), 0 2px 8px rgba(60, 44, 28, .05);
   --shadow-md: 0 4px 12px rgba(60, 44, 28, .07), 0 14px 34px rgba(60, 44, 28, .09);
   --shadow-lg: 0 10px 30px rgba(60, 44, 28, .10), 0 30px 70px rgba(60, 44, 28, .16);
-  --radius: 18px;
   --serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
   --mini-h: 82px;
@@ -38,8 +49,17 @@ html[data-theme="dark"] {
   --text-2: #cfc5b7;
   --muted: #948a7c;
   --accent: #e09a6c;
+  --accent-2: #b96a3c;
   --accent-soft: #3a2a1e;
   --accent-line: #4d3626;
+  --danger: #ec8b7a;
+  --danger-soft: rgba(236, 139, 122, .12);
+  --warn: #3d2f1c;
+  --warn-ink: #f0c78a;
+  --warn-line: #5a4526;
+  --overlay: rgba(0, 0, 0, .58);
+  --toast-bg: #f2ebe1;
+  --toast-fg: #221d16;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3), 0 2px 10px rgba(0, 0, 0, .25);
   --shadow-md: 0 6px 16px rgba(0, 0, 0, .34), 0 16px 40px rgba(0, 0, 0, .32);
   --shadow-lg: 0 12px 34px rgba(0, 0, 0, .45), 0 40px 80px rgba(0, 0, 0, .5);
@@ -67,14 +87,17 @@ body.mini-hidden { padding-bottom: 28px; }
 
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 svg path[d^="M8 5.5v13"], svg path[d^="M6 6.5v11L"], svg path[d^="M18 6.5v11"] { fill: currentColor; stroke: none; }
-svg .i-fill, .i-play path, .i-pause path { fill: currentColor; stroke: none; }
+svg .i-play path, svg .i-pause path { fill: currentColor; stroke: none; }
 
 button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
-input { font-family: inherit; }
+input, select, textarea { font-family: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 600; }
 p { margin: 0; }
 .muted { color: var(--muted); }
 .tiny { font-size: 12px; letter-spacing: .01em; }
+
+/* 键盘可达性：只在键盘聚焦时出轮廓，鼠标点击不显示 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------------- 顶栏 ---------------- */
 
@@ -630,7 +653,6 @@ input[type="range"]::-moz-range-thumb {
 .col-tile.sorting { cursor: grab; background: var(--surface-2); }
 .col-tile.sorting:hover { transform: none; }
 .col-tile.dragging { opacity: .4; }
-.col-tile.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
 
 .col-arrows { display: flex; gap: 6px; justify-content: center; }
 .col-arrows button {
@@ -668,10 +690,8 @@ input[type="range"]::-moz-range-thumb {
 .pick-count { font-style: normal; color: var(--accent); font-weight: 600; }
 .pick-none { padding: 14px; text-align: center; font-size: 13px; }
 
-.btn.danger { color: #b23b2e; border-color: color-mix(in srgb, #b23b2e 30%, var(--line)); }
-.btn.danger:hover { background: color-mix(in srgb, #b23b2e 9%, transparent); color: #b23b2e; }
-html[data-theme="dark"] .btn.danger { color: #ec8b7a; border-color: color-mix(in srgb, #ec8b7a 28%, var(--line)); }
-html[data-theme="dark"] .btn.danger:hover { background: color-mix(in srgb, #ec8b7a 12%, transparent); }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, var(--line)); }
+.btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
 .foot-spacer { flex: 1; }
 
 /* ---------------- 上传书籍 ---------------- */
@@ -700,8 +720,6 @@ html[data-theme="dark"] .btn.danger:hover { background: color-mix(in srgb, #ec8b
 .upload-progress p { margin-top: 8px; font-variant-numeric: tabular-nums; }
 
 .upload-tip { line-height: 1.65; margin-bottom: 8px; }
-#localPickLink { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
-#localPickLink:hover { color: var(--accent); }
 
 @media (max-width: 520px) {
   .upload-pick { grid-template-columns: 1fr; gap: 10px; }
@@ -714,7 +732,7 @@ html[data-theme="dark"] .btn.danger:hover { background: color-mix(in srgb, #ec8b
 .modal {
   position: fixed; inset: 0; z-index: 95;
   display: grid; place-items: center; padding: 18px;
-  background: color-mix(in srgb, #1a140e 44%, transparent);
+  background: var(--overlay);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   animation: fadeIn .18s ease;
 }
@@ -757,13 +775,14 @@ html[data-theme="dark"] .btn.danger:hover { background: color-mix(in srgb, #ec8b
   display: flex; align-items: center; justify-content: center;
   border: none; background: transparent; color: var(--muted); cursor: pointer;
 }
-.pm-item .pm-del:hover { background: var(--danger-soft, rgba(220,60,60,.12)); color: var(--danger, #d33); }
+.pm-item .pm-del:hover { background: var(--danger-soft); color: var(--danger); }
 .pm-item .pm-del svg { width: 16px; height: 16px; }
 .pm-empty { padding: 24px 8px; text-align: center; color: var(--muted); font-size: 13px; }
 
 
 .edit-cover-row { display: flex; gap: 18px; align-items: flex-start; margin: 4px 0 20px; }
-.edit-cover { width: 112px; height: 112px; border-radius: 14px; }.edit-cover .cv-fallback { font-size: 22px; }
+.edit-cover { width: 112px; height: 112px; border-radius: 14px; }
+.edit-cover .cv-fallback { font-size: 22px; }
 .edit-cover-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; flex: 1; min-width: 0; }
 .edit-cover-side .btn { justify-content: flex-start; }
 .edit-cover-side .btn svg { width: 15px; height: 15px; }
@@ -820,24 +839,17 @@ html[data-theme="dark"] .btn.danger:hover { background: color-mix(in srgb, #ec8b
 .pop-row.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .pop-row .pr-right { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pop-row.on .pr-right { color: var(--accent); }
-.pop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 2px 4px 6px; }
-.pop-square {
-  padding: 9px 0; border-radius: 9px; font-size: 12.5px;
-  font-variant-numeric: tabular-nums; color: var(--text-2); transition: .13s;
-}
-.pop-square:hover { background: var(--surface-2); }
-.pop-square.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--mini-h) + 26px);
   transform: translateX(-50%);
   z-index: 90; padding: 10px 18px; border-radius: 12px;
-  background: #2a231b; color: #f8f1e6; font-size: 13px;
+  background: var(--toast-bg); color: var(--toast-fg); font-size: 13px;
   box-shadow: 0 8px 28px rgba(0,0,0,.28);
   animation: toastIn .22s ease;
   max-width: 86vw; text-align: center;
 }
-html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
+html[data-theme="dark"] .toast { background: var(--toast-bg); color: var(--toast-fg); }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
 /* 滚动条 */
@@ -907,7 +919,7 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
 
 /* ---------------- 用户 / 登录 ---------------- */
 
-.user-btn { width: auto !important; padding: 0 10px; gap: 6px; display: inline-flex; align-items: center; }
+.icon-btn.user-btn { width: auto; padding: 0 10px; gap: 6px; display: inline-flex; align-items: center; }
 .user-btn svg { width: 17px; height: 17px; }
 .user-label { font-size: 12px; max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -915,7 +927,7 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
 .auth-logo {
   width: 54px; height: 54px; margin: 2px auto 12px; border-radius: 16px;
   display: grid; place-items: center; color: #fff;
-  background: linear-gradient(145deg, var(--accent), var(--accent-2, #8f5c3c));
+  background: linear-gradient(145deg, var(--accent), var(--accent-2));
   font-family: var(--serif); font-size: 25px; box-shadow: var(--shadow-sm);
 }
 .auth-card h2 { font-family: var(--serif); font-size: 21px; letter-spacing: .03em; }
@@ -929,7 +941,7 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
 }
 .auth-field input:focus { outline: 2px solid var(--accent-line); border-color: var(--accent); }
 .auth-form .btn { margin-top: 4px; justify-content: center; }
-.auth-error { color: var(--danger, #c0392b); font-size: 12.5px; margin: 0 2px; }
+.auth-error { color: var(--danger); font-size: 12.5px; margin: 0 2px; }
 .auth-foot { margin-top: 14px; line-height: 1.6; }
 
 .users-card { width: min(560px, 100%); }
@@ -937,7 +949,6 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
 .account-info { font-size: 13.5px; line-height: 1.8; color: var(--text-2); margin-bottom: 14px; white-space: pre-line; }
 .account-actions { display: flex; flex-direction: column; gap: 8px; }
 .account-actions .btn { justify-content: center; }
-.btn.danger { color: var(--danger, #c0392b); border-color: color-mix(in srgb, var(--danger, #c0392b) 35%, var(--line)); }
 .user-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
 .user-row {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px;
@@ -948,7 +959,7 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
   font-size: 11px; padding: 2px 7px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-line);
 }
-.user-row .u-role.admin { background: var(--warn, #f4e3c8); color: #7a4b12; border-color: #e4c79d; }
+.user-row .u-role.admin { background: var(--warn); color: var(--warn-ink); border-color: var(--warn-line); }
 .user-row .u-spacer { flex: 1; }
 .user-row .btn { height: 28px; padding: 0 10px; font-size: 12px; }
 .new-user-form { border-top: 1px solid var(--line-soft); padding-top: 14px; }
@@ -964,5 +975,5 @@ html[data-theme="dark"] .toast { background: #f2ebe1; color: #221d16; }
 
 @media (max-width: 560px) {
   .user-label { display: none; }
-  .user-btn { width: 38px !important; padding: 0; justify-content: center; }
+  .icon-btn.user-btn { width: 38px; padding: 0; justify-content: center; }
 }
