@@ -83,6 +83,12 @@ data class PauseMark(
     }
 }
 
+/** 暂停记录接口的一整包数据：记录 + 删除墓碑（id → 删除时间）。 */
+data class PauseMarksSnapshot(
+    val items: List<PauseMark> = emptyList(),
+    val removed: Map<String, Long> = emptyMap(),
+)
+
 data class LibrarySnapshot(
     val books: List<Book>,
     val collections: List<Collection>?,

@@ -43,8 +43,24 @@ class PauseMarksStore(context: Context) {
         prefs.edit().clear().apply()
     }
 
+    /** 删除墓碑：id → 删除时间。跨设备同步时带上，避免删掉的记录被另一端推回来。 */
+    fun loadRemoved(): Map<String, Long> {
+        val raw = prefs.getString(KEY_REMOVED, null) ?: return emptyMap()
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+        val out = HashMap<String, Long>()
+        obj.keys().forEach { key -> out[key] = obj.optLong(key) }
+        return out
+    }
+
+    fun saveRemoved(map: Map<String, Long>) {
+        val obj = JSONObject()
+        map.forEach { (id, ts) -> if (id.isNotBlank()) obj.put(id, ts) }
+        prefs.edit().putString(KEY_REMOVED, obj.toString()).apply()
+    }
+
     companion object {
         private const val KEY = "pausemarks_json"
+        private const val KEY_REMOVED = "pausemarks_removed"
 
         fun toJson(list: List<PauseMark>): JSONArray {
             val arr = JSONArray()

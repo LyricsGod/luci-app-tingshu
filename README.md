@@ -25,7 +25,7 @@ uhttpd(:8686) ──► /tmp/tingshu/www        网页本体 + library.json（�
 - 断点续播、±30 秒、0.5×–3× 倍速
 - 定时关闭：15–90 分钟或「播完本章」，分钟定时可勾选「到点后听完本节」
 - 后台 / 锁屏继续播放，自动预取下一章，播完无缝续下一集
-- 暂停记录：手动暂停、开启定时、定时到点都会记一笔，可跳转续播、单条删除、清空；每条带来源标记（手机 / 显示器小图标），两端共用同一份列表
+- 暂停记录：手动暂停、开启定时、定时到点都会记一笔，可跳转续播、单条删除、清空；每条带来源标记（手机 / 显示器小图标），两端共用同一份列表（推送前先拉取合并，删除带墓碑，不会互相覆盖）
 
 **管**
 
@@ -128,7 +128,7 @@ LuCI → 服务 → 听书：
 | `cgi-ts/progress` | GET / POST | `?b=<hex>` 取单本；全量取所有；POST 写一本 |
 | `cgi-ts/meta` | GET / POST | 书名 / 简介 / 配色 / 封面（封面为 base64），写需管理员 |
 | `cgi-ts/collections` | GET / POST | 整个合集列表读写 |
-| `cgi-ts/pausemarks` | GET / POST | 整个暂停记录列表读写；每条记录带 source（pp 移动端 / web 网页端） |
+| `cgi-ts/pausemarks` | GET / POST | `{"items":[…],"removed":{…}}`：记录 + 删除墓碑；每条记录带 `source`（`app` 移动端 / `web` 网页端） |
 | `cgi-ts/manage` | POST | `upload` / `archive` / `delete` / `rescan`（管理员） |
 | `cgi-ts/backup` | GET / POST | `info` / `export` / `import`（管理员，见下） |
 

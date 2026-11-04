@@ -109,7 +109,7 @@ app/src/main/java/com/tingshu/app/
 - **进度合并**：两边都有记录时按 `updatedAt` 取新的；两边都是空记录就跳过。
 - **done**：只有自动播完（`MEDIA_ITEM_TRANSITION_REASON_AUTO`）或整本播完才记该章已完成。
 - **合集**：一本书只能在一个合集里；服务端数组是权威来源，本地改动合并后 400ms 防抖推送。
-- **暂停记录**：`pause` / `timer` / `timer-start` 三种原因 + `source`（`app` / `web`，旧记录为空）；本地与服务端按 id 合并，整包推送。
+- **暂停记录**：`pause` / `timer` / `timer-start` 三种原因 + `source`（`app` / `web`，旧记录为空）；推送前先拉服务器合并，连同删除墓碑 `removed` 一起写回，避免覆盖另一端的记录。
 - **封面**：选图后在 App/网页里自由缩放、拖动裁切，输出 720×720 JPEG（质量 86），方框内即所见。
 - **上传结构**：文件夹名就是书名；选中的如果是「装多本书的父目录」，和网页一样剥掉外层；
   `CD1/光盘1/第N卷` 这类分盘目录不剥。
@@ -119,7 +119,7 @@ app/src/main/java/com/tingshu/app/
 - 只支持局域网 HTTP（`usesCleartextTraffic=true`）；外网访问请走 VPN 或反向代理。
 - Android 13+ 需要授予通知权限才会显示播放通知；部分国产 ROM 还要手动允许后台运行/自启动。
 - 播放列表里的封面只用 `artworkUri`，不把 base64 塞进每条 MediaItem，避免 Binder 事务超限。
-- 当前版本号 1.6.0，APK 用仓库内的固定证书签名（可直接覆盖升级）。
+- 当前版本号 1.6.1，APK 用仓库内的固定证书签名（可直接覆盖升级）。
 
 ## 测试
 

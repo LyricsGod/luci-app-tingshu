@@ -2,11 +2,16 @@
 #
 # 听书 · 暂停记录同步接口（uhttpd CGI）
 #
-#   GET  /cgi-ts/pausemarks   → {"ok":true,"items":[...]}
-#   POST /cgi-ts/pausemarks   → body 是整个 JSON 数组
+#   GET  /cgi-ts/pausemarks   → {"ok":true,"items":[...],"removed":{"<id>":<ts>}}
+#   POST /cgi-ts/pausemarks   → {"items":[...],"removed":{...}}
+#                               也接受老客户端直接 POST 整个数组（当成 items）
 #
 # 数据放在 /etc/tingshu/users/<用户>/pausemarks.json（overlay，重启不丢）
-# 记录数量有限，总是整体读写，用单个文件存整个列表。
+# 文件格式：{"items":[…],"removed":{…}}
+#   items   暂停记录
+#   removed 删除墓碑：id → 删除时间。带上它，两台设备才不会把对方删掉的记录又推回来。
+#
+# 服务端不解析 JSON，只做整体读写；合并（按 id 取新的）在客户端做。
 #
 
 . "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
@@ -15,6 +20,9 @@ ts_require_auth
 DATA_FILE="${TINGSHU_PAUSEMARKS_FILE:-$TS_USERS_DIR/$TS_USER/pausemarks.json}"
 
 method="${REQUEST_METHOD:-GET}"
+first_char() {
+	head -c 1 "$1" 2>/dev/null
+}
 
 # ---- POST ----
 if [ "$method" = "POST" ]; then
@@ -22,22 +30,31 @@ if [ "$method" = "POST" ]; then
 	ts_read_body 1048576 || ts_fail 413 "too large"
 
 	case "$TS_BODY" in
-		'['*']') ;;
+		'{'*'}') body="$TS_BODY" ;;
+		'['*']') body='{"items":'"$TS_BODY"',"removed":{}}' ;;
 		*) ts_fail 400 "bad payload" ;;
 	esac
 
 	mkdir -p "$(dirname "$DATA_FILE")" 2>/dev/null
-	printf '%s' "$TS_BODY" | ts_write_atomic "$DATA_FILE" || ts_fail 500 "write failed"
+	printf '%s' "$body" | ts_write_atomic "$DATA_FILE" || ts_fail 500 "write failed"
 	ts_ok ""
 fi
 
 # ---- GET ----
 ts_header
 if [ -f "$DATA_FILE" ]; then
-	printf '{"ok":true,"items":'
-	cat "$DATA_FILE"
-	printf '}\n'
+	if [ "$(first_char "$DATA_FILE")" = "[" ]; then
+		# 1.6.0 之前存的是裸数组，包一层返回
+		printf '{"ok":true,"items":'
+		cat "$DATA_FILE"
+		printf ',"removed":{}}\n'
+	else
+		# 文件本身就是 {"items":…,"removed":…}，去掉开头的 { 再接上 ok
+		printf '{"ok":true,'
+		tail -c +2 "$DATA_FILE" 2>/dev/null
+		printf '\n'
+	fi
 else
-	printf '{"ok":true,"items":[]}\n'
+	printf '{"ok":true,"items":[],"removed":{}}\n'
 fi
 exit 0

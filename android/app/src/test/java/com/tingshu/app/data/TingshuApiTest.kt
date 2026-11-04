@@ -132,22 +132,25 @@ class TingshuApiTest {
     }
 
     @Test
-    fun `推送暂停记录使用 JSON 数组`() = runBlocking {
-        val mark = PauseMark("pm-1", "net:三体", "三体", 2, "红岸之谜", 12.5, "pause", 1000L)
-        assertTrue(api.pushPauseMarks(base, listOf(mark)))
-        val body = captured["POST /cgi-ts/pausemarks"].orEmpty()
-        val arr = org.json.JSONArray(body)
+    fun `推送暂停记录带 items 和删除墓碑`() = runBlocking {
+        val mark = PauseMark("pm-1", "net:三体", "三体", 2, "红岸之谜", 12.5, "pause", 1000L, "app")
+        assertTrue(api.pushPauseMarks(base, listOf(mark), mapOf("pm-old" to 999L)))
+        val body = org.json.JSONObject(captured["POST /cgi-ts/pausemarks"].orEmpty())
+        val arr = body.getJSONArray("items")
         assertEquals(1, arr.length())
         assertEquals("pm-1", arr.getJSONObject(0).getString("id"))
         assertEquals("pause", arr.getJSONObject(0).getString("reason"))
+        assertEquals("app", arr.getJSONObject(0).getString("source"))
+        assertEquals(999L, body.getJSONObject("removed").getLong("pm-old"))
     }
 
     @Test
-    fun `拉取暂停记录`() = runBlocking {
-        val marks = api.fetchPauseMarks(base)
-        assertEquals(1, marks.size)
-        assertEquals("pm-1", marks[0].id)
-        assertEquals("net:三体", marks[0].bookId)
+    fun `拉取暂停记录带删除墓碑`() = runBlocking {
+        val snapshot = api.fetchPauseMarks(base)
+        assertEquals(1, snapshot.items.size)
+        assertEquals("pm-1", snapshot.items[0].id)
+        assertEquals("net:三体", snapshot.items[0].bookId)
+        assertEquals(777L, snapshot.removed["pm-gone"])
     }
 
     @Test
@@ -218,7 +221,8 @@ class TingshuApiTest {
 
         const val PAUSEMARKS = """
             {"ok":true,"items":[{"id":"pm-1","bookId":"net:三体","bookTitle":"三体","index":2,
-              "trackTitle":"红岸之谜","time":12.5,"reason":"pause","createdAt":1000}]}
+              "trackTitle":"红岸之谜","time":12.5,"reason":"pause","createdAt":1000,"source":"app"}],
+             "removed":{"pm-gone":777}}
         """
     }
 }

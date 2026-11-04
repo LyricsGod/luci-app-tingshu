@@ -284,11 +284,12 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
             JSONObject(text).optBoolean("ok")
         }
 
-    suspend fun fetchPauseMarks(base: String): List<PauseMark> = withContext(Dispatchers.IO) {
+    /** 拉暂停记录：返回记录本身 + 服务器上的删除墓碑（id → 删除时间）。 */
+    suspend fun fetchPauseMarks(base: String): PauseMarksSnapshot = withContext(Dispatchers.IO) {
         val text = request("${base}cgi-ts/pausemarks?t=${System.currentTimeMillis()}")
         val json = JSONObject(text)
-        if (!json.optBoolean("ok")) return@withContext emptyList()
-        val arr = json.optJSONArray("items") ?: return@withContext emptyList()
+        if (!json.optBoolean("ok")) return@withContext PauseMarksSnapshot()
+        val arr = json.optJSONArray("items") ?: JSONArray()
         val out = ArrayList<PauseMark>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -309,16 +310,27 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
                 )
             )
         }
-        out
+        val removed = HashMap<String, Long>()
+        json.optJSONObject("removed")?.let { obj ->
+            obj.keys().forEach { key -> removed[key] = obj.optLong(key) }
+        }
+        PauseMarksSnapshot(out, removed)
     }
 
-    suspend fun pushPauseMarks(base: String, list: List<PauseMark>): Boolean =
+    /** 推送：完整记录 + 删除墓碑，服务端整体写回。 */
+    suspend fun pushPauseMarks(
+        base: String,
+        list: List<PauseMark>,
+        removed: Map<String, Long> = emptyMap(),
+    ): Boolean =
         withContext(Dispatchers.IO) {
-            val body = PauseMarksStore.toJson(list).toString()
+            val payload = JSONObject()
+                .put("items", PauseMarksStore.toJson(list))
+                .put("removed", JSONObject().apply { removed.forEach { (id, ts) -> put(id, ts) } })
             val text = request(
                 url = base + "cgi-ts/pausemarks",
                 method = "POST",
-                body = body.toByteArray(Charsets.UTF_8),
+                body = payload.toString().toByteArray(Charsets.UTF_8),
                 contentType = "application/json",
                 timeoutMs = 12000,
             )

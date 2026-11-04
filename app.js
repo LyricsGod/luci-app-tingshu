@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.0';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.1';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -416,6 +416,9 @@
     state.collections = [];
     syncEnabled = false;
     colSyncEnabled = false;
+    // 换账号了，墓碑缓存跟着换（localStorage 里按用户名分开存）
+    pmRemoved = new Map();
+    pmRemovedLoaded = false;
   }
 
   /* ================= 小工具 ================= */
@@ -3171,56 +3174,97 @@
   const PAUSEMARKS_API = 'cgi-ts/pausemarks';
   let pmPushTimer = null;
 
-  // 把本地全部暂停记录推到服务器（整体上传，去重防抖）
-  function pushServerPauseMarks() {
-    if (state.source !== 'net') return;
-    clearTimeout(pmPushTimer);
-    pmPushTimer = setTimeout(async () => {
-      try {
-        let marks = [];
-        try { marks = await dbAll('pausemarks'); } catch { marks = []; }
-        const payload = (marks || []).map(m => ({
-          id: m.id,
-          bookId: m.bookId,
-          bookTitle: m.bookTitle || '',
-          index: m.index,
-          trackTitle: m.trackTitle || '',
-          time: m.time,
-          reason: m.reason || 'pause',
-          createdAt: m.createdAt || 0,
-          source: m.source || '',
-        }));
-        await fetch(PAUSEMARKS_API, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } catch { /* 忽略 */ }
-    }, 500);
+  /* 删除墓碑：id → 删除时间。推送时带上，另一台设备才不会把删掉的记录又推回来。 */
+  let pmRemoved = new Map();
+  let pmRemovedLoaded = false;
+
+  function pmRemovedKey() {
+    return 'tingshu.pmRemoved.' + (state.user || 'anon');
   }
 
-  // 启动时从服务器拉取暂停记录，合并到本地（按 id 去重，取 createdAt 新的）
-  async function pullServerPauseMarks() {
-    let data;
+  function loadPmRemoved() {
+    if (pmRemovedLoaded) return;
+    pmRemovedLoaded = true;
     try {
-      const res = await fetch(PAUSEMARKS_API + '?t=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) return 0;
-      data = await res.json();
-    } catch { return 0; }
-    if (!data || data.ok !== true || !Array.isArray(data.items)) return 0;
+      const raw = localStorage.getItem(pmRemovedKey());
+      const obj = raw ? (JSON.parse(raw) || {}) : {};
+      Object.keys(obj).forEach((id) => pmRemoved.set(id, Number(obj[id]) || 0));
+    } catch { /* 忽略 */ }
+  }
 
-    // 本地记录
+  function savePmRemoved() {
+    loadPmRemoved();
+    // 90 天前的墓碑没必要一直留着
+    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+    for (const [id, ts] of [...pmRemoved]) if (ts && ts < cutoff) pmRemoved.delete(id);
+    try {
+      localStorage.setItem(pmRemovedKey(), JSON.stringify(Object.fromEntries(pmRemoved)));
+    } catch { /* 忽略 */ }
+  }
+
+  function rememberRemoved(ids) {
+    loadPmRemoved();
+    const now = Date.now();
+    (ids || []).forEach((id) => { if (id) pmRemoved.set(id, now); });
+    savePmRemoved();
+  }
+
+  function pauseMarkPayload(list) {
+    return (list || []).map((m) => ({
+      id: m.id,
+      bookId: m.bookId,
+      bookTitle: m.bookTitle || '',
+      index: m.index,
+      trackTitle: m.trackTitle || '',
+      time: m.time,
+      reason: m.reason || 'pause',
+      createdAt: m.createdAt || 0,
+      source: m.source || '',
+    }));
+  }
+
+  async function fetchPauseMarksRemote() {
+    const res = await fetch(PAUSEMARKS_API + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || data.ok !== true) return null;
+    return {
+      items: Array.isArray(data.items) ? data.items : [],
+      removed: (data.removed && typeof data.removed === 'object') ? data.removed : {},
+    };
+  }
+
+  /** 把服务器上的记录与墓碑并进本地（按 id 取较新的那份），返回变动的条数。 */
+  async function mergePauseMarks(remote) {
+    const items = remote.items || [];
+    loadPmRemoved();
+    for (const [id, ts] of Object.entries(remote.removed || {})) {
+      const t = Number(ts) || 0;
+      if (!pmRemoved.has(id) || pmRemoved.get(id) < t) pmRemoved.set(id, t);
+    }
+    savePmRemoved();
+
     let local = [];
     try { local = await dbAll('pausemarks'); } catch { local = []; }
-    const localMap = new Map((local || []).map(m => [m.id, m]));
+    const localMap = new Map((local || []).map((m) => [m.id, m]));
 
     let changed = 0;
-    for (const rec of data.items) {
+    // 墓碑生效：服务器说删过的，本地这份如果没更新过也删掉
+    for (const [id, ts] of pmRemoved) {
+      const existing = localMap.get(id);
+      if (!existing) continue;
+      if ((Number(existing.createdAt) || 0) <= ts) {
+        await dbDelete('pausemarks', id).catch(() => {});
+        localMap.delete(id);
+        changed++;
+      }
+    }
+    // 记录合并：同 id 取 createdAt 较新的
+    for (const rec of items) {
       if (!rec || typeof rec !== 'object' || !rec.id) continue;
       const existing = localMap.get(rec.id);
       const remoteTs = Number(rec.createdAt) || 0;
       const localTs = existing ? (Number(existing.createdAt) || 0) : 0;
-      // 本地有且更新，保留本地；否则用服务器覆盖
       if (existing && localTs >= remoteTs) continue;
 
       const merged = {
@@ -3235,10 +3279,43 @@
         source: normalizeMarkSource(rec.source),
       };
       await dbPut('pausemarks', merged).catch(() => {});
+      localMap.set(rec.id, merged);
       changed++;
     }
 
     return changed;
+  }
+
+  // 启动时从服务器拉取暂停记录，合并到本地
+  async function pullServerPauseMarks() {
+    const remote = await fetchPauseMarksRemote().catch(() => null);
+    if (!remote) return 0;
+    return mergePauseMarks(remote);
+  }
+
+  /**
+   * 推送暂停记录：先拉一遍合并，再把完整状态（记录 + 墓碑）写回。
+   * 只推本地列表会覆盖掉另一台设备刚记的内容，所以这里必须先读后写。
+   */
+  function pushServerPauseMarks() {
+    if (state.source !== 'net') return;
+    clearTimeout(pmPushTimer);
+    pmPushTimer = setTimeout(async () => {
+      try {
+        const remote = await fetchPauseMarksRemote().catch(() => null);
+        if (remote) await mergePauseMarks(remote);
+        let marks = [];
+        try { marks = await dbAll('pausemarks'); } catch { marks = []; }
+        await fetch(PAUSEMARKS_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: pauseMarkPayload(marks),
+            removed: Object.fromEntries(pmRemoved),
+          }),
+        });
+      } catch { /* 忽略 */ }
+    }, 500);
   }
 
   function ensureProgress(bookId) {
@@ -3733,6 +3810,7 @@
 
   async function deletePauseMark(id, bookId) {
     try { await dbDelete('pausemarks', id); } catch {}
+    rememberRemoved([id]);
     pushServerPauseMarks();
     toast('已删除');
     await renderPauseMarks(bookId);
@@ -3745,6 +3823,7 @@
     for (const m of marks) {
       try { await dbDelete('pausemarks', m.id); } catch {}
     }
+    rememberRemoved(marks.map((m) => m.id));
     pushServerPauseMarks();
     toast('已清空');
     await renderPauseMarks(bookId);
@@ -4708,6 +4787,12 @@
         return;
       }
       if (state.user) void pullServerCollections();
+      // 回到前台也拉一次暂停记录：另一端刚记的能马上出现
+      if (state.user) {
+        void pullServerPauseMarks().then((n) => {
+          if (n > 0 && !el.pausemarksSheet.hidden && state.bookView) void renderPauseMarks(state.bookView.id);
+        });
+      }
 
       // 安卓后台/锁屏可能把 blob 源回收掉：没源了就用存的 blob 重建，blob 也没了就重新拉章节
       const a = el.audio;

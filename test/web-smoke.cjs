@@ -237,8 +237,34 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   check('记录前面有来源小图标', $$('#pausemarksList .pm-src').length === 1);
   check('网页端记录标记为 web', !!$('#pausemarksList .pm-src.web'));
   await new Promise((r) => setTimeout(r, 600));
-  const pmPush = pushedBodies[pushedBodies.length - 1] || [];
+  const pmPush = (pushedBodies[pushedBodies.length - 1] || {}).items || [];
   check('推送的数据带上 source=web', pmPush.some((m) => m && m.source === 'web'));
+  const localMarkId = (pmPush[0] || {}).id;
+
+  /* ---- 云端合并：另一端记的会并进来，删除墓碑能删掉本地那份 ---- */
+  const remoteMark = {
+    id: 'pm-remote-1', bookId: 'net:ming', bookTitle: '明朝那些事儿', index: 1,
+    trackTitle: '02 红岸', time: 9, reason: 'pause', createdAt: Date.now() + 1000, source: 'app',
+  };
+  routes['cgi-ts/pausemarks'] = { ok: true, items: [remoteMark], removed: {} };
+  w.document.dispatchEvent(new w.Event('visibilitychange'));
+  await new Promise((r) => setTimeout(r, 150));
+  click($('#bookMarksBtn'));
+  await new Promise((r) => setTimeout(r, 60));
+  check('另一端的记录会并进来', $$('#pausemarksList .pm-item').length === 2);
+  check('并进来的记录显示移动端图标', $$('#pausemarksList .pm-src.app').length === 1);
+
+  routes['cgi-ts/pausemarks'] = {
+    ok: true,
+    items: [remoteMark],
+    removed: { [localMarkId]: Date.now() + 5000 },
+  };
+  w.document.dispatchEvent(new w.Event('visibilitychange'));
+  await new Promise((r) => setTimeout(r, 150));
+  click($('#bookMarksBtn'));
+  await new Promise((r) => setTimeout(r, 60));
+  check('服务器上的删除墓碑会删掉本地记录', $$('#pausemarksList .pm-item').length === 1);
+
   press('Escape');
   check('Esc 关闭暂停记录', $('#pausemarksSheet').hidden);
 

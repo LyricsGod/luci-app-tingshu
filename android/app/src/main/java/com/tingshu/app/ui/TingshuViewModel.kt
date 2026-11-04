@@ -85,6 +85,9 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val progress = MutableStateFlow<Map<String, Progress>>(progressStore.load())
     val pauseMarks = MutableStateFlow(pauseMarkStore.load())
 
+    /** 暂停记录的删除墓碑：id → 删除时间，推送时带上，另一端才不会把删掉的记录推回来。 */
+    private val pmRemoved: MutableMap<String, Long> = pauseMarkStore.loadRemoved().toMutableMap()
+
     val search = MutableStateFlow("")
     val sort = MutableStateFlow(runCatching { SortMode.valueOf(prefs.sort) }.getOrDefault(SortMode.RECENT))
     val theme = MutableStateFlow(ThemeMode.from(prefs.theme))
@@ -173,7 +176,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                     if (snapshot.books.isEmpty() && snapshot.error != null) LoadState.Error(snapshot.error)
                     else LoadState.Ready
                 pullProgress(base)
-                pullPauseMarks(base)
+                if (pullPauseMarks(base)) schedulePushPauseMarks()
                 syncEnabled = true
             } catch (t: Throwable) {
                 if (isAuthError(t)) {
@@ -669,20 +672,37 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
 
     fun deletePauseMark(id: String) {
         pauseMarks.value = pauseMarks.value.filterNot { it.id == id }
+        markRemoved(listOf(id))
         pauseMarkStore.save(pauseMarks.value)
         schedulePushPauseMarks()
         messages.tryEmit("已删除这条记录")
     }
 
     fun clearPauseMarks(bookId: String? = null) {
+        val doomed = pauseMarks.value.filter { bookId == null || it.bookId == bookId }.map { it.id }
         pauseMarks.value = if (bookId == null) {
             emptyList()
         } else {
             pauseMarks.value.filterNot { it.bookId == bookId }
         }
+        markRemoved(doomed)
         pauseMarkStore.save(pauseMarks.value)
         schedulePushPauseMarks()
         messages.tryEmit("已清空暂停记录")
+    }
+
+    private fun markRemoved(ids: List<String>) {
+        if (ids.isEmpty()) return
+        val now = System.currentTimeMillis()
+        ids.forEach { id -> if (id.isNotBlank()) pmRemoved[id] = now }
+        pruneRemoved()
+        pauseMarkStore.saveRemoved(pmRemoved)
+    }
+
+    /** 90 天前的墓碑没必要一直留着，推送前顺手清掉（网页端同样处理）。 */
+    private fun pruneRemoved() {
+        val cutoff = System.currentTimeMillis() - 90L * 24 * 3600 * 1000
+        pmRemoved.entries.removeIf { it.value in 1 until cutoff }
     }
 
     fun pauseMarksFor(bookId: String?): List<PauseMark> =
@@ -703,32 +723,52 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             delay(500)
             val base = serverUrl.value
             if (base.isBlank()) return@launch
+            // 先拉一遍合并，再整体写回；只推本地列表会把另一端刚记的覆盖掉
+            runCatching { pullPauseMarks(base) }
+            pruneRemoved()
             val snapshot = pauseMarks.value
-            withContext(Dispatchers.IO) { runCatching { api.pushPauseMarks(base, snapshot) } }
+            withContext(Dispatchers.IO) {
+                runCatching { api.pushPauseMarks(base, snapshot, pmRemoved) }
+            }
         }
     }
 
-    private suspend fun pullPauseMarks(base: String) {
+    /** 把服务器上的记录与墓碑并进本地；返回 true 表示本地有服务器还没有的记录，需要补推一次。 */
+    private suspend fun pullPauseMarks(base: String): Boolean {
         val remote = withContext(Dispatchers.IO) {
             runCatching { api.fetchPauseMarks(base) }.getOrNull()
-        } ?: return
+        } ?: return false
 
-        val local = pauseMarks.value
-        val map = local.associateBy { it.id }.toMutableMap()
         var changed = false
-        for (r in remote) {
+        // 墓碑合并：两边都记着，取更晚的删除时间
+        remote.removed.forEach { (id, ts) ->
+            if (ts > (pmRemoved[id] ?: 0L)) {
+                pmRemoved[id] = ts
+                changed = true
+            }
+        }
+        if (changed) pauseMarkStore.saveRemoved(pmRemoved)
+
+        val map = pauseMarks.value.associateBy { it.id }.toMutableMap()
+        // 服务器上已经删掉的，本地这份要是没更新过也跟着删
+        val stale = map.entries.filter { (id, m) -> (pmRemoved[id] ?: 0L) >= m.createdAt }.map { it.key }
+        if (stale.isNotEmpty()) {
+            stale.forEach { map.remove(it) }
+            changed = true
+        }
+        for (r in remote.items) {
             val l = map[r.id]
             if (l == null || l.createdAt <= r.createdAt) {
                 if (l != r) changed = true
                 map[r.id] = r
             }
         }
-        val localOnly = local.any { l -> remote.none { it.id == l.id } }
-        if (changed || localOnly) {
+        if (changed) {
             pauseMarks.value = map.values.sortedByDescending { it.createdAt }
             pauseMarkStore.save(pauseMarks.value)
-            if (localOnly) schedulePushPauseMarks()
         }
+        val remoteIds = remote.items.mapTo(HashSet()) { it.id }
+        return map.keys.any { id -> id !in remoteIds && (pmRemoved[id] ?: 0L) < (map[id]?.createdAt ?: 0L) }
     }
 
     /* ---------------- 进度同步 ---------------- */
