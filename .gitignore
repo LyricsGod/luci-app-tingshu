@@ -1,10 +1,14 @@
 # 依赖产物
 dist/
+node_modules/
+__pycache__/
+*.pyc
 build/
 *.ipk
 
 # 本地测试用
 _tmp_audio/
+.tmp-test/
 .workbuddy/
 
 # 系统
