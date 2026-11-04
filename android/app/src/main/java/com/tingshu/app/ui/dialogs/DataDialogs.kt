@@ -483,7 +483,7 @@ private fun PauseMarkRow(
                 modifier = Modifier
                     .size(26.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (mark.isFromApp) colors.primaryContainer else colors.surfaceVariant),
+                    .background(if (mark.isFromApp) colors.primaryContainer else colors.surfaceContainerHighest),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
