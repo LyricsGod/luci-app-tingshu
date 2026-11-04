@@ -1,7 +1,7 @@
 {
   "name": "听书 · 本地离线书架",
   "short_name": "听书",
-  "description": "离线播放本机文件夹里的有声书，自动记忆进度，支持倍速与定时关闭。",
+  "description": "把本机或路由器上的有声书做成网页书架：断点续听、倍速、定时关闭、合集与多端同步。",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",

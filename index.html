@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>听书 · 本地离线书架</title>
+<meta name="description" content="把本机或路由器上的有声书文件夹变成网页书架：断点续听、倍速、定时关闭、合集，支持多端同步。">
+<!-- 页面本身由路由器上的 init 脚本按启动时间加版本号，这里再声明一次避免中间层缓存 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -24,9 +26,9 @@
   </div>
 
   <div class="topbar-actions">
-    <label class="search-wrap" for="searchInput">
+    <label class="search-wrap">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
-      <input id="searchInput" type="search" placeholder="搜索书名" autocomplete="off" spellcheck="false">
+      <input id="searchInput" type="search" placeholder="搜索书名" aria-label="搜索书名" autocomplete="off" spellcheck="false">
     </label>
     <button id="userBtn" class="icon-btn user-btn" title="账号">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c.8-3.6 3.7-5.5 7.5-5.5s6.7 1.9 7.5 5.5"/></svg>
@@ -529,7 +531,7 @@
 
 <!-- ============ 浮层：倍速 / 定时 ============ -->
 <div id="popover" class="popover" hidden></div>
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <audio id="audio" preload="metadata"></audio>
 <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
@@ -538,6 +540,9 @@
 <input id="uploadFileInput" type="file" accept=".zip,.tar,.gz,.tgz,application/zip,application/gzip" hidden>
 <input id="progressFileInput" type="file" accept=".json,application/json" hidden>
 
+<noscript>
+  <p style="padding:24px;text-align:center">听书需要开启 JavaScript 才能运行。</p>
+</noscript>
 <script>window.__BOOT_STAMP__ = '@BOOT@'; window.__BUILD_VER__ = '@BUILD@';</script>
 <script src="app.js"></script>
 </body>
