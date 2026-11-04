@@ -231,24 +231,51 @@ fun BookScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(6.dp))
+                        // 已听章节数 / 总章节数
                         Text(
-                            text = buildString {
-                                append("${book.chapterCount} 章")
-                                if (hasProgress) {
-                                    append(" · 已听 ")
-                                    append(formatTime(record?.time ?: 0.0))
-                                }
-                            },
+                            text = if (hasProgress) "已听 $doneCount/${book.chapterCount} 章" else "共 ${book.chapterCount} 章",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant,
                         )
-                        if (doneCount > 0) {
+                        // 当前听到哪一章、本章进度（播放状态单独一行，和上个版本一致）
+                        if (hasProgress) {
+                            val shownIndex = if (isCurrent) playerState.index else (record?.index ?: 0)
+                            val shownPos = if (isCurrent) playerState.positionMs / 1000.0 else (record?.time ?: 0.0)
+                            val shownDur = if (isCurrent) playerState.durationMs / 1000.0 else 0.0
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                text = "已听完 $doneCount 章",
+                                text = buildString {
+                                    append(if (isCurrent) "正在收听 " else "上次听到 ")
+                                    append(shownIndex + 1)
+                                    append(" 章 ")
+                                    append(formatTime(shownPos))
+                                    if (shownDur > 1) {
+                                        append("/")
+                                        append(formatTime(shownDur))
+                                    }
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                        }
+                        if (isCurrent) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.primary)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = if (playing) "正在播放" else "已暂停",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.primary,
+                                )
+                            }
                         }
                         if (collection != null) {
                             Spacer(Modifier.height(4.dp))
@@ -265,23 +292,6 @@ fun BookScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colors.primary,
                                     maxLines = 1,
-                                )
-                            }
-                        }
-                        if (isCurrent) {
-                            Spacer(Modifier.height(6.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    Modifier
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.primary)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = if (playing) "正在播放" else "已暂停",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.primary,
                                 )
                             }
                         }
