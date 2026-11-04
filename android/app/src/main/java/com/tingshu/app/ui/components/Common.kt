@@ -357,14 +357,22 @@ fun ServerAddressField(
     val parts = Urls.splitServer(value)
 
     fun emit(scheme: String = parts.scheme, host: String = parts.host, port: String = parts.port) {
-        // 兼容把完整地址直接粘进主机栏：自动拆出协议和端口
+        // 兼容把完整地址直接粘进主机栏：自动拆出协议和端口。
+        // 只有主机栏里真的写了端口才覆盖现有端口，否则用户填的 8888 会被默认值顶掉。
         val pasted = Urls.splitServer(host)
         val pastedFull = host.contains("://")
+        val authority = host.substringAfter("://").substringBefore('/')
+        val typedPort = authority.substringAfterLast(':', "")
+        val hasTypedPort = typedPort.isNotEmpty() && typedPort.all { it.isDigit() }
         onValueChange(
             Urls.joinServer(
                 scheme = if (pastedFull) pasted.scheme else scheme,
                 host = pasted.host,
-                port = if (pasted.port.isNotEmpty()) pasted.port else port,
+                port = when {
+                    hasTypedPort -> pasted.port
+                    pastedFull -> Urls.DEFAULT_PORT
+                    else -> port
+                },
                 path = if (pastedFull) pasted.path else parts.path,
             )
         )
@@ -410,7 +418,9 @@ fun ServerAddressField(
             )
             OutlinedTextField(
                 value = parts.port,
-                onValueChange = { emit(port = it.filter { ch -> ch.isDigit() }) },
+                onValueChange = {
+                    emit(port = it.filter { ch -> ch.isDigit() }.ifEmpty { Urls.DEFAULT_PORT })
+                },
                 modifier = Modifier.width(104.dp),
                 singleLine = true,
                 label = { Text("端口") },

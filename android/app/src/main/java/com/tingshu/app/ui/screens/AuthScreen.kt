@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingshu.app.ui.TingshuViewModel
 import com.tingshu.app.ui.components.LogoMark
+import com.tingshu.app.ui.components.ServerAddressField
 
 /**
  * 登录页。服务器第一次使用（还没有用户）时，点「连接并登录」会创建管理员。
@@ -59,7 +60,7 @@ fun AuthScreen(vm: TingshuViewModel) {
     val found by vm.foundServers.collectAsStateWithLifecycle()
 
     var address by rememberSaveable {
-        mutableStateOf(vm.serverUrl.value.ifBlank { "192.168.2.1:8686" })
+        mutableStateOf(vm.serverUrl.value.ifBlank { "http://192.168.2.1:8686" })
     }
     var user by rememberSaveable { mutableStateOf("") }
     var pass by rememberSaveable { mutableStateOf("") }
@@ -103,15 +104,11 @@ fun AuthScreen(vm: TingshuViewModel) {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("服务器", style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
-                    OutlinedTextField(
+                    ServerAddressField(
                         value = address,
                         onValueChange = { address = it },
-                        singleLine = true,
-                        placeholder = { Text("路由器IP:8686") },
-                        leadingIcon = { Icon(Icons.Rounded.Wifi, null, Modifier.size(18.dp)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(

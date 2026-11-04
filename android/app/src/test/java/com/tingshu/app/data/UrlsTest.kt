@@ -54,13 +54,15 @@ class UrlsTest {
             Urls.splitServer("https://ting.example.com:443"),
         )
         assertEquals(
-            Urls.ServerParts("https", "example.com", "", "/tingshu"),
+            Urls.ServerParts("https", "example.com", "8686", "/tingshu"),
             Urls.splitServer("https://example.com/tingshu/"),
         )
+        // 没写端口时预填默认值，登录页不用手敲 8686
         assertEquals(
-            Urls.ServerParts("http", "ting.example.com", ""),
+            Urls.ServerParts("http", "ting.example.com", "8686"),
             Urls.splitServer("ting.example.com"),
         )
+        assertEquals("8686", Urls.DEFAULT_PORT)
     }
 
     @Test

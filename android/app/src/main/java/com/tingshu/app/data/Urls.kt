@@ -8,7 +8,7 @@ package com.tingshu.app.data
  */
 object Urls {
 
-    private const val DEFAULT_PORT = 8686
+    const val DEFAULT_PORT = "8686"
 
     /** 把用户输入的 `192.168.1.1`、`192.168.1.1:8686`、`http://x/` 统一成 `http://x:8686/`。 */
     fun normalizeServer(input: String): String? {
@@ -96,8 +96,10 @@ object Urls {
         val path = if (slash >= 0) rest.substring(slash).trimEnd('/') else ""
         val colon = authority.lastIndexOf(':')
         val tail = if (colon >= 0) authority.substring(colon + 1) else ""
-        val port = if (colon >= 0 && tail.isNotEmpty() && tail.all { it.isDigit() }) tail else ""
-        val host = if (port.isNotEmpty()) authority.substring(0, colon) else authority
+        val hasPort = colon >= 0 && tail.isNotEmpty() && tail.all { it.isDigit() }
+        // 没写端口时预填默认端口，登录页 / 引导页不用手敲 8686
+        val port = if (hasPort) tail else DEFAULT_PORT
+        val host = if (hasPort) authority.substring(0, colon) else authority
         return ServerParts(scheme, host, port, path)
     }
 
