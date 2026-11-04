@@ -67,6 +67,7 @@ define Package/luci-app-tingshu/install
 	$(INSTALL_DIR) $(1)/usr/lib/tingshu/api
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/scan.sh $(1)/usr/lib/tingshu/scan.sh
 	$(INSTALL_DATA) ./files/usr/lib/tingshu/auth.sh $(1)/usr/lib/tingshu/auth.sh
+	$(INSTALL_DATA) ./files/usr/lib/tingshu/http.sh $(1)/usr/lib/tingshu/http.sh
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/progress $(1)/usr/lib/tingshu/api/progress
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/manage $(1)/usr/lib/tingshu/api/manage
 	$(INSTALL_BIN) ./files/usr/lib/tingshu/api/collections $(1)/usr/lib/tingshu/api/collections

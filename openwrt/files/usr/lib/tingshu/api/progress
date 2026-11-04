@@ -6,8 +6,9 @@
 #   GET  /cgi-ts/progress?b=<hexId>  → 单本
 #   POST /cgi-ts/progress            → body: b=<hexId>&i=<章>&t=<秒>&d=<0,1>&u=<时间戳>
 #
-# 数据放在 /etc/tingshu/progress/<hexId>.json（overlay，重启不丢）
+# 数据放在 /etc/tingshu/users/<用户>/progress/<hexId>.json（overlay，重启不丢）
 # 书 id 由前端转成十六进制，这里只接受 [0-9a-f]，避免任何路径/注入问题。
+#
 
 . /usr/lib/tingshu/auth.sh
 ts_require_auth
@@ -15,67 +16,35 @@ ts_require_auth
 DATA_DIR="${TINGSHU_PROGRESS_DIR:-$TS_USERS_DIR/$TS_USER/progress}"
 mkdir -p "$DATA_DIR" 2>/dev/null
 
-hdr() {
-	printf 'Content-Type: application/json; charset=utf-8\r\n'
-	printf 'Cache-Control: no-store\r\n'
-	printf 'X-Content-Type-Options: nosniff\r\n'
-	printf '\r\n'
-}
-
-# 从 a=1&b=2 中取出某个键的值
-param() {
-	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
-}
-
 method="${REQUEST_METHOD:-GET}"
 
+# ---- POST：写一本进度 ----
 if [ "$method" = "POST" ]; then
-	len="${CONTENT_LENGTH:-0}"
-	case "$len" in ''|*[!0-9]*) len=0 ;; esac
-	body=""
-	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+	ts_read_body 65536 || ts_fail 413 "too large"
 
-	b="$(param "$body" b)"
-	i="$(param "$body" i)"
-	t="$(param "$body" t)"
-	d="$(param "$body" d)"
-	u="$(param "$body" u)"
+	b="$(ts_param "$TS_BODY" b)"
+	i="$(ts_param "$TS_BODY" i)"
+	t="$(ts_param "$TS_BODY" t)"
+	d="$(ts_param "$TS_BODY" d)"
+	u="$(ts_param "$TS_BODY" u)"
 
-	# 只允许安全字符
-	case "$b" in ''|*[!0-9a-f]*) hdr; printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
-	[ ${#b} -le 400 ] || { hdr; printf '{"ok":false,"error":"id too long"}\n'; exit 0; }
-	case "$i" in ''|*[!0-9]*) hdr; printf '{"ok":false,"error":"bad index"}\n'; exit 0 ;; esac
-	case "$t" in ''|*[!0-9.]*) hdr; printf '{"ok":false,"error":"bad time"}\n'; exit 0 ;; esac
-	case "$u" in ''|*[!0-9]*) hdr; printf '{"ok":false,"error":"bad ts"}\n'; exit 0 ;; esac
-	case "$d" in *[!0-9,]*) hdr; printf '{"ok":false,"error":"bad done"}\n'; exit 0 ;; esac
+	ts_is_hex "$b" || ts_fail 400 "bad id"
+	[ ${#b} -le 400 ] || ts_fail 400 "id too long"
+	ts_is_uint "$i" || ts_fail 400 "bad index"
+	case "$t" in ''|*[!0-9.]*) ts_fail 400 "bad time" ;; esac
+	ts_is_uint "$u" || ts_fail 400 "bad ts"
+	case "$d" in *[!0-9,]*) ts_fail 400 "bad done" ;; esac
 
-	tmp="$DATA_DIR/.$b.$$"
-	printf '{"index":%s,"time":%s,"done":[%s],"updatedAt":%s}' "$i" "$t" "$d" "$u" > "$tmp" 2>/dev/null
-	if [ $? -ne 0 ]; then
-		rm -f "$tmp" 2>/dev/null
-		hdr
-		printf '{"ok":false,"error":"write failed"}\n'
-		exit 0
-	fi
-	mv -f "$tmp" "$DATA_DIR/$b.json" 2>/dev/null
-	if [ $? -ne 0 ]; then
-		rm -f "$tmp" 2>/dev/null
-		hdr
-		printf '{"ok":false,"error":"rename failed"}\n'
-		exit 0
-	fi
-
-	hdr
-	printf '{"ok":true}\n'
-	exit 0
+	printf '{"index":%s,"time":%s,"done":[%s],"updatedAt":%s}' "$i" "$t" "$d" "$u" \
+		| ts_write_atomic "$DATA_DIR/$b.json" || ts_fail 500 "write failed"
+	ts_ok ""
 fi
 
 # ---- GET ----
-one="$(param "${QUERY_STRING:-}" b)"
-hdr
+one="$(ts_param "${QUERY_STRING:-}" b)"
 
 if [ -n "$one" ]; then
-	case "$one" in *[!0-9a-f]*) printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	ts_is_hex "$one" || ts_fail 400 "bad id"
 	if [ -f "$DATA_DIR/$one.json" ]; then
 		printf '{"ok":true,"items":{"%s":' "$one"
 		cat "$DATA_DIR/$one.json"
@@ -92,8 +61,8 @@ for f in "$DATA_DIR"/*.json; do
 	[ -f "$f" ] || continue
 	k="${f##*/}"
 	k="${k%.json}"
-	case "$k" in ''|*[!0-9a-f]*) continue ;; esac
-	[ $first -eq 1 ] || printf ','
+	ts_is_hex "$k" || continue
+	[ "$first" -eq 1 ] || printf ','
 	first=0
 	printf '"%s":' "$k"
 	cat "$f"

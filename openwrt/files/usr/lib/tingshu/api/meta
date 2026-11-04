@@ -7,8 +7,9 @@
 #   GET  /cgi-ts/meta?b=<hexId> → 单本
 #   POST /cgi-ts/meta           → body 是 JSON：{id:<hexId>,title,desc,palette,cover(base64),coverType,updatedAt}
 #
-# 数据放在 /etc/tingshu/meta/<hexId>.json（overlay，重启不丢）
-# 封面以 base64 存进 json（书籍封面通常几百 KB，可接受）
+# 数据放在 /etc/tingshu/meta/<hexId>.json：书籍是全局共享的，所以不按用户分目录。
+# 封面以 base64 存进 json（书籍封面通常几百 KB，可接受）。
+#
 
 . /usr/lib/tingshu/auth.sh
 ts_require_auth
@@ -16,63 +17,31 @@ ts_require_auth
 DATA_DIR="${TINGSHU_META_DIR:-/etc/tingshu/meta}"
 mkdir -p "$DATA_DIR" 2>/dev/null
 
-hdr() {
-	printf 'Content-Type: application/json; charset=utf-8\r\n'
-	printf 'Cache-Control: no-store\r\n'
-	printf 'X-Content-Type-Options: nosniff\r\n'
-	printf '\r\n'
-}
-
-param() {
-	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
-}
-
 method="${REQUEST_METHOD:-GET}"
 
+# ---- POST：只有管理员能改书名/封面 ----
 if [ "$method" = "POST" ]; then
-	[ "$TS_ROLE" = "admin" ] || {
-		ts_send_403
-		printf '{"ok":false,"error":"forbidden"}\n'
-		exit 0
-	}
-	len="${CONTENT_LENGTH:-0}"
-	case "$len" in ''|*[!0-9]*) len=0 ;; esac
-	[ "$len" -gt 2097152 ] && { hdr; printf '{"ok":false,"error":"too large"}\n'; exit 0; }  # 上限 2MB
+	[ "$TS_ROLE" = "admin" ] || ts_fail 403 "forbidden"
+	ts_read_body 2097152 || ts_fail 413 "too large"     # 上限 2MB
 
-	body=""
-	[ "$len" -gt 0 ] && body="$(head -c "$len")"
+	id="$(printf '%s' "$TS_BODY" | sed -n 's/.*"id":"\([0-9a-f]*\)".*/\1/p')"
+	ts_is_hex "$id" || ts_fail 400 "bad id"
+	[ ${#id} -le 400 ] || ts_fail 400 "id too long"
 
-	# 校验 id 是安全 hex
-	id="$(printf '%s' "$body" | sed -n 's/.*"id":"\([0-9a-f]*\)".*/\1/p')"
-	case "$id" in ''|*[!0-9a-f]*) hdr; printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
-	[ ${#id} -le 400 ] || { hdr; printf '{"ok":false,"error":"id too long"}\n'; exit 0; }
+	case "$TS_BODY" in
+		'{'*'}') ;;
+		*) ts_fail 400 "bad payload" ;;
+	esac
 
-	# 诊断日志：记录 body 大小、cover 长度、desc 内容
-	_clen=$(printf '%s' "$body" | sed -n 's/.*"cover":"\([^"]*\)".*/\1/p' | wc -c)
-	_dval=$(printf '%s' "$body" | sed -n 's/.*"desc":"\([^"]*\)".*/\1/p' | head -c 40)
-	logger -t tingshu "meta POST body=${len} cover=${_clen} desc=[${_dval}]"
-
-	tmp="$DATA_DIR/.$id.$$"
-	printf '%s' "$body" > "$tmp" 2>/dev/null
-	if [ $? -ne 0 ]; then
-		rm -f "$tmp" 2>/dev/null
-		hdr; printf '{"ok":false,"error":"write failed"}\n'; exit 0
-	fi
-	mv -f "$tmp" "$DATA_DIR/$id.json" 2>/dev/null
-	if [ $? -ne 0 ]; then
-		rm -f "$tmp" 2>/dev/null
-		hdr; printf '{"ok":false,"error":"rename failed"}\n'; exit 0
-	fi
-
-	hdr; printf '{"ok":true}\n'; exit 0
+	printf '%s' "$TS_BODY" | ts_write_atomic "$DATA_DIR/$id.json" || ts_fail 500 "write failed"
+	ts_ok ""
 fi
 
 # ---- GET ----
-one="$(param "${QUERY_STRING:-}" b)"
-hdr
+one="$(ts_param "${QUERY_STRING:-}" b)"
 
 if [ -n "$one" ]; then
-	case "$one" in *[!0-9a-f]*) printf '{"ok":false,"error":"bad id"}\n'; exit 0 ;; esac
+	ts_is_hex "$one" || ts_fail 400 "bad id"
 	if [ -f "$DATA_DIR/$one.json" ]; then
 		printf '{"ok":true,"items":{"%s":' "$one"
 		cat "$DATA_DIR/$one.json"
@@ -87,9 +56,10 @@ printf '{"ok":true,"items":{'
 first=1
 for f in "$DATA_DIR"/*.json; do
 	[ -f "$f" ] || continue
-	k="${f##*/}"; k="${k%.json}"
-	case "$k" in ''|*[!0-9a-f]*) continue ;; esac
-	[ $first -eq 1 ] || printf ','
+	k="${f##*/}"
+	k="${k%.json}"
+	ts_is_hex "$k" || continue
+	[ "$first" -eq 1 ] || printf ','
 	first=0
 	printf '"%s":' "$k"
 	cat "$f"

@@ -132,6 +132,8 @@ openwrt/
     etc/config/tingshu               UCI 配置
     etc/init.d/tingshu               procd 服务
     usr/lib/tingshu/scan.sh          扫目录生成 library.json
+    usr/lib/tingshu/http.sh          CGI 公共函数（响应头、参数、原子写入）
+    usr/lib/tingshu/auth.sh          用户 / 会话 / 鉴权
     usr/lib/tingshu/api/progress     进度读写 CGI
     usr/lib/tingshu/api/manage       上传/删除/重扫 CGI
     usr/lib/tingshu/api/collections  合集同步 CGI

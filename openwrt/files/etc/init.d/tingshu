@@ -13,24 +13,27 @@ MEDIA=$WWW_DIR/media
 
 # 把静态文件复制到可写的 tmpfs，顺便腾出位置放 library.json 和 media
 prepare_www() {
+	local f name src api ver date_str
 	mkdir -p "$WWW_DIR"
 	chmod 755 "$WWW_DIR"
 	for f in "$SRC_WWW"/*; do
 		[ -e "$f" ] || continue
-		cp -f "$f" "$WWW_DIR/$(basename "$f")" 2>/dev/null
-		chmod 644 "$WWW_DIR/$(basename "$f")" 2>/dev/null
+		cp -f "$f" "$WWW_DIR/$name" 2>/dev/null
+		chmod 644 "$WWW_DIR/$name" 2>/dev/null
 	done
 	# 每次启动给静态资源加版本号，避免浏览器缓存旧版（uhttpd 无 no-cache 选项）
-	_ver=$(date +%s)
+	ver=$(date +%s)
 	# 注入版本号到静态资源引用 + 全局变量（点击首页品牌可看）
-	_date=$(date '+%Y-%m-%d %H:%M:%S')
-	sed -i "s#app.js#app.js?v=$_ver#g; s#styles.css#styles.css?v=$_ver#g; \
-	        s#@BOOT@#$_ver#g; s#@BUILD@#$_date#g" "$WWW_DIR/index.html" 2>/dev/null
+	date_str=$(date '+%Y-%m-%d %H:%M:%S')
+	sed -i "s#app.js#app.js?v=$ver#g; s#styles.css#styles.css?v=$ver#g; \
+	        s#@BOOT@#$ver#g; s#@BUILD@#$date_str#g" "$WWW_DIR/index.html" 2>/dev/null
 	# CGI 接口：进度同步 + 书库管理 + 合集同步 + 元数据同步 + 暂停记录同步
 	mkdir -p "$WWW_DIR/cgi-ts"
 	chmod 755 "$WWW_DIR/cgi-ts"
-	for api in progress manage collections meta pausemarks auth users layout; do
-		cp -f "/usr/lib/tingshu/api/$api" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
+	for src in /usr/lib/tingshu/api/*; do
+		[ -f "$src" ] || continue
+		api="${src##*/}"
+		cp -f "$src" "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 		chmod 755 "$WWW_DIR/cgi-ts/$api" 2>/dev/null
 	done
 	# 进度数据放 overlay，重启不丢；多用户目录也在这里
@@ -44,6 +47,7 @@ prepare_www() {
 
 # 安全地解除 media 上的挂载/软链（绝不在挂载状态下 rm -rf）
 unlink_media() {
+	local dir
 	if mount 2>/dev/null | grep -q " on $MEDIA "; then
 		umount "$MEDIA" 2>/dev/null
 	fi
@@ -83,7 +87,7 @@ start_service() {
 	procd_open_instance
 	# 不用 -c 配置文件：各发行版的 uhttpd 配置格式不一致，命令行参数最稳
 	# -x /cgi-ts：把 /cgi-ts/* 交给 CGI，用于进度同步
-	procd_set_param command /usr/sbin/uhttpd -f -h "$WWW_DIR" -p "0.0.0.0:$port" -I index.html -D -x /cgi-ts
+	procd_set_param command /usr/sbin/uhttpd -f -h "$WWW_DIR" -p "0.0.0.0:$port" \n		-I index.html -D -x /cgi-ts
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1

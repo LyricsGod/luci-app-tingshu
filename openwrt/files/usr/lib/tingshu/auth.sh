@@ -14,6 +14,11 @@
 #
 # 密码用 openssl passwd -6（SHA-512 crypt）加盐保存，不存明文。
 #
+# 约定：对外暴露的只有 TS_USER / TS_ROLE / TS_TOKEN 三个全局变量，
+# 其余中间变量一律 local，避免把调用方的变量冲掉。
+#
+
+. /usr/lib/tingshu/http.sh
 
 TS_USERS_DIR="${TINGSHU_USERS_DIR:-/etc/tingshu/users}"
 TS_SESSION_DIR="${TINGSHU_SESSIONS_DIR:-/tmp/tingshu-sessions}"
@@ -23,21 +28,7 @@ TS_MIN_PASSWORD=6
 mkdir -p "$TS_USERS_DIR" "$TS_SESSION_DIR" 2>/dev/null
 chmod 700 "$TS_USERS_DIR" "$TS_SESSION_DIR" 2>/dev/null
 
-ts_urldecode() {
-	printf '%b' "$(printf '%s' "$1" | sed 's/%/\\x/g; s/+/ /g')"
-}
-
-ts_param() {
-	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
-}
-
-ts_safe_name() {
-	case "$1" in
-		''|*[!A-Za-z0-9_-]*) return 1 ;;
-	esac
-	[ ${#1} -ge 1 ] && [ ${#1} -le 32 ] || return 1
-	return 0
-}
+# ---- 用户信息 ----
 
 ts_user_home() {
 	printf '%s/%s' "$TS_USERS_DIR" "$1"
@@ -56,6 +47,7 @@ ts_user_count() {
 }
 
 ts_count_admins() {
+	local n f
 	n=0
 	for f in "$TS_USERS_DIR"/*/account; do
 		[ -f "$f" ] || continue
@@ -63,6 +55,16 @@ ts_count_admins() {
 	done
 	printf '%s' "$n"
 }
+
+ts_safe_name() {
+	case "$1" in
+		''|*[!A-Za-z0-9_-]*) return 1 ;;
+	esac
+	[ ${#1} -ge 1 ] && [ ${#1} -le 32 ] || return 1
+	return 0
+}
+
+# ---- 密码 ----
 
 ts_new_salt() {
 	hexdump -n 8 -e '8/1 "%02x"' /dev/urandom
@@ -77,164 +79,142 @@ ts_hash_password() {
 }
 
 ts_check_password() {
-	_u="$1"
-	_pw="$2"
-	[ -f "$TS_USERS_DIR/$_u/account" ] || return 1
-	_salt="$(sed -n 's/^salt=//p' "$TS_USERS_DIR/$_u/account" | head -n 1)"
-	_stored="$(sed -n 's/^hash=//p' "$TS_USERS_DIR/$_u/account" | head -n 1)"
-	[ -n "$_salt" ] && [ -n "$_stored" ] || return 1
-	_actual="$(ts_hash_password "$_salt" "$_pw")"
-	[ -n "$_actual" ] && [ "$_actual" = "$_stored" ] || return 1
+	local user pw salt stored actual
+	user="$1"
+	pw="$2"
+	[ -f "$TS_USERS_DIR/$user/account" ] || return 1
+	salt="$(sed -n 's/^salt=//p' "$TS_USERS_DIR/$user/account" | head -n 1)"
+	stored="$(sed -n 's/^hash=//p' "$TS_USERS_DIR/$user/account" | head -n 1)"
+	[ -n "$salt" ] && [ -n "$stored" ] || return 1
+	actual="$(ts_hash_password "$salt" "$pw")"
+	[ -n "$actual" ] && [ "$actual" = "$stored" ] || return 1
 	return 0
 }
 
+# ts_create_user <user> <password> <role>
+# 返回：0 成功 / 2 用户名非法 / 3 已存在 / 4 密码不合格 / 5 角色非法 / 6 写入失败
 ts_create_user() {
-	_u="$1"
-	_pw="$2"
-	_role="$3"
-	ts_safe_name "$_u" || return 2
-	ts_user_exists "$_u" && return 3
-	[ ${#_pw} -ge "$TS_MIN_PASSWORD" ] && [ ${#_pw} -le 128 ] || return 4
-	case "$_pw" in *[![:print:]]*) return 4 ;; esac
-	case "$_role" in admin|user) ;; *) return 5 ;; esac
+	local user pw role home salt hash tmp
+	user="$1"
+	pw="$2"
+	role="$3"
+	ts_safe_name "$user" || return 2
+	ts_user_exists "$user" && return 3
+	[ ${#pw} -ge "$TS_MIN_PASSWORD" ] && [ ${#pw} -le 128 ] || return 4
+	case "$pw" in *[![:print:]]*) return 4 ;; esac
+	case "$role" in admin|user) ;; *) return 5 ;; esac
 
-	_home="$TS_USERS_DIR/$_u"
-	mkdir -p "$_home/progress" 2>/dev/null || return 6
-	_salt="$(ts_new_salt)"
-	_hash="$(ts_hash_password "$_salt" "$_pw")"
-	[ -n "$_hash" ] || return 6
-	_tmp="$_home/.account.$$"
+	home="$TS_USERS_DIR/$user"
+	mkdir -p "$home/progress" 2>/dev/null || return 6
+	salt="$(ts_new_salt)"
+	hash="$(ts_hash_password "$salt" "$pw")"
+	[ -n "$hash" ] || return 6
+	tmp="$home/.account.$$"
 	{
-		printf 'role=%s\n' "$_role"
-		printf 'salt=%s\n' "$_salt"
-		printf 'hash=%s\n' "$_hash"
+		printf 'role=%s\n' "$role"
+		printf 'salt=%s\n' "$salt"
+		printf 'hash=%s\n' "$hash"
 		printf 'created=%s\n' "$(date +%s)"
-	} > "$_tmp" || { rm -f "$_tmp"; return 6; }
-	mv -f "$_tmp" "$_home/account" || { rm -f "$_tmp"; return 6; }
-	chmod 600 "$_home/account" 2>/dev/null
-	chmod 700 "$_home" 2>/dev/null
+	} > "$tmp" || { rm -f "$tmp"; return 6; }
+	mv -f "$tmp" "$home/account" || { rm -f "$tmp"; return 6; }
+	chmod 600 "$home/account" 2>/dev/null
+	chmod 700 "$home" 2>/dev/null
 	return 0
 }
 
 ts_set_password() {
-	_u="$1"
-	_pw="$2"
-	ts_user_exists "$_u" || return 3
-	[ ${#_pw} -ge "$TS_MIN_PASSWORD" ] && [ ${#_pw} -le 128 ] || return 4
-	case "$_pw" in *[![:print:]]*) return 4 ;; esac
-	_salt="$(ts_new_salt)"
-	_hash="$(ts_hash_password "$_salt" "$_pw")"
-	[ -n "$_hash" ] || return 6
-	_account="$TS_USERS_DIR/$_u/account"
-	_tmp="$TS_USERS_DIR/$_u/.account.$$"
+	local user pw salt hash account tmp
+	user="$1"
+	pw="$2"
+	ts_user_exists "$user" || return 3
+	[ ${#pw} -ge "$TS_MIN_PASSWORD" ] && [ ${#pw} -le 128 ] || return 4
+	case "$pw" in *[![:print:]]*) return 4 ;; esac
+	salt="$(ts_new_salt)"
+	hash="$(ts_hash_password "$salt" "$pw")"
+	[ -n "$hash" ] || return 6
+	account="$TS_USERS_DIR/$user/account"
+	tmp="$TS_USERS_DIR/$user/.account.$$"
 	{
-		printf 'role=%s\n' "$(ts_user_role "$_u")"
-		printf 'salt=%s\n' "$_salt"
-		printf 'hash=%s\n' "$_hash"
-		printf 'created=%s\n' "$(sed -n 's/^created=//p' "$_account" | head -n 1)"
-	} > "$_tmp" || { rm -f "$_tmp"; return 6; }
-	mv -f "$_tmp" "$_account" || { rm -f "$_tmp"; return 6; }
-	chmod 600 "$_account" 2>/dev/null
+		printf 'role=%s\n' "$(ts_user_role "$user")"
+		printf 'salt=%s\n' "$salt"
+		printf 'hash=%s\n' "$hash"
+		printf 'created=%s\n' "$(sed -n 's/^created=//p' "$account" | head -n 1)"
+	} > "$tmp" || { rm -f "$tmp"; return 6; }
+	mv -f "$tmp" "$account" || { rm -f "$tmp"; return 6; }
+	chmod 600 "$account" 2>/dev/null
 	return 0
 }
 
-ts_delete_user_data() {
-	_u="$1"
-	ts_safe_name "$_u" || return 2
-	rm -rf "$TS_USERS_DIR/$_u"
-	ts_delete_sessions_for "$_u"
-}
+# ---- 会话 ----
 
 ts_delete_sessions_for() {
-	_u="$1"
-	for _sf in "$TS_SESSION_DIR"/*; do
-		[ -f "$_sf" ] || continue
-		[ "$(sed -n '1p' "$_sf")" = "$_u" ] && rm -f "$_sf"
+	local user sf
+	user="$1"
+	for sf in "$TS_SESSION_DIR"/*; do
+		[ -f "$sf" ] || continue
+		[ "$(sed -n '1p' "$sf")" = "$user" ] && rm -f "$sf"
 	done
 }
 
+ts_delete_user_data() {
+	local user
+	user="$1"
+	ts_safe_name "$user" || return 2
+	rm -rf "$TS_USERS_DIR/$user"
+	ts_delete_sessions_for "$user"
+}
+
+# 创建会话并输出 token（同时设置全局 TS_TOKEN）
 ts_create_session() {
-	_u="$1"
-	_role="$2"
-	_token="$(ts_new_token)"
-	[ ${#_token} -eq 64 ] || return 1
-	_exp=$(( $(date +%s) + TS_SESSION_TTL ))
-	printf '%s\n%s\n%s\n' "$_u" "$_role" "$_exp" > "$TS_SESSION_DIR/$_token" || return 1
-	chmod 600 "$TS_SESSION_DIR/$_token" 2>/dev/null
-	TS_TOKEN="$_token"
-	printf '%s' "$_token"
+	local user role token exp
+	user="$1"
+	role="$2"
+	token="$(ts_new_token)"
+	[ ${#token} -eq 64 ] || return 1
+	exp=$(( $(date +%s) + TS_SESSION_TTL ))
+	printf '%s\n%s\n%s\n' "$user" "$role" "$exp" > "$TS_SESSION_DIR/$token" || return 1
+	chmod 600 "$TS_SESSION_DIR/$token" 2>/dev/null
+	TS_TOKEN="$token"
+	printf '%s' "$token"
 }
 
 ts_token_from_request() {
-	_token=""
+	local token
+	token=""
 	if [ -n "${HTTP_X_AUTH_TOKEN:-}" ]; then
-		_token="$HTTP_X_AUTH_TOKEN"
+		token="$HTTP_X_AUTH_TOKEN"
 	elif [ -n "${HTTP_AUTHORIZATION:-}" ]; then
-		_token="$(printf '%s' "$HTTP_AUTHORIZATION" | sed -n 's/^[Bb]earer[[:space:]][[:space:]]*//p')"
+		token="$(printf '%s' "$HTTP_AUTHORIZATION" | sed -n 's/^[Bb]earer[[:space:]][[:space:]]*//p')"
 	fi
-	if [ -z "$_token" ] && [ -n "${HTTP_COOKIE:-}" ]; then
-		_token="$(printf '%s' "$HTTP_COOKIE" | tr ';' '\n' \
+	if [ -z "$token" ] && [ -n "${HTTP_COOKIE:-}" ]; then
+		token="$(printf '%s' "$HTTP_COOKIE" | tr ';' '\n' \
 			| sed -n 's/^[[:space:]]*tingshu_session=\([0-9a-fA-F]*\).*/\1/p' | head -n 1)"
 	fi
-	printf '%s' "$_token"
+	printf '%s' "$token"
 }
 
+# 从请求里恢复会话，成功则设置 TS_USER / TS_ROLE / TS_TOKEN
 ts_load_session() {
-	_token="$(ts_token_from_request)"
-	case "$_token" in
+	local token sf user role exp
+	token="$(ts_token_from_request)"
+	case "$token" in
 		''|*[!0-9a-fA-F]*) return 1 ;;
 	esac
-	[ ${#_token} -eq 64 ] || return 1
-	_sf="$TS_SESSION_DIR/$_token"
-	[ -f "$_sf" ] || return 1
-	_u="$(sed -n '1p' "$_sf")"
-	_role="$(sed -n '2p' "$_sf")"
-	_exp="$(sed -n '3p' "$_sf")"
-	case "$_exp" in ''|*[!0-9]*) rm -f "$_sf"; return 1 ;; esac
-	[ "$_exp" -gt "$(date +%s)" ] || { rm -f "$_sf"; return 1; }
-	ts_user_exists "$_u" || { rm -f "$_sf"; return 1; }
-	# 角色以账号文件为准
-	_role="$(ts_user_role "$_u")"
-	TS_USER="$_u"
-	TS_ROLE="$_role"
-	TS_TOKEN="$_token"
+	[ ${#token} -eq 64 ] || return 1
+	sf="$TS_SESSION_DIR/$token"
+	[ -f "$sf" ] || return 1
+	user="$(sed -n '1p' "$sf")"
+	role="$(sed -n '2p' "$sf")"
+	exp="$(sed -n '3p' "$sf")"
+	case "$exp" in ''|*[!0-9]*) rm -f "$sf"; return 1 ;; esac
+	[ "$exp" -gt "$(date +%s)" ] || { rm -f "$sf"; return 1; }
+	ts_user_exists "$user" || { rm -f "$sf"; return 1; }
+	# 角色以账号文件为准，避免会话里残留旧角色
+	role="$(ts_user_role "$user")"
+	TS_USER="$user"
+	TS_ROLE="$role"
+	TS_TOKEN="$token"
 	return 0
-}
-
-ts_send_401() {
-	printf 'Status: 401 Unauthorized\r\n'
-	printf 'Content-Type: application/json; charset=utf-8\r\n'
-	printf 'Cache-Control: no-store\r\n'
-	printf 'X-Content-Type-Options: nosniff\r\n'
-	printf '\r\n'
-}
-
-ts_send_403() {
-	printf 'Status: 403 Forbidden\r\n'
-	printf 'Content-Type: application/json; charset=utf-8\r\n'
-	printf 'Cache-Control: no-store\r\n'
-	printf 'X-Content-Type-Options: nosniff\r\n'
-	printf '\r\n'
-}
-
-ts_require_auth() {
-	if [ "${TINGSHU_AUTH_DISABLED:-0}" = "1" ]; then
-		TS_USER="admin"
-		TS_ROLE="admin"
-		return 0
-	fi
-	ts_load_session && return 0
-	ts_send_401
-	printf '{"ok":false,"error":"unauthorized"}\n'
-	exit 0
-}
-
-ts_require_admin() {
-	ts_require_auth
-	[ "$TS_ROLE" = "admin" ] && return 0
-	ts_send_403
-	printf '{"ok":false,"error":"forbidden"}\n'
-	exit 0
 }
 
 ts_set_cookie() {
@@ -245,21 +225,40 @@ ts_clear_cookie() {
 	printf 'Set-Cookie: tingshu_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0\r\n'
 }
 
+# ---- 鉴权 ----
+
+ts_require_auth() {
+	if [ "${TINGSHU_AUTH_DISABLED:-0}" = "1" ]; then
+		TS_USER="admin"
+		TS_ROLE="admin"
+		return 0
+	fi
+	ts_load_session && return 0
+	ts_fail 401 "unauthorized"
+}
+
+ts_require_admin() {
+	ts_require_auth
+	[ "$TS_ROLE" = "admin" ] && return 0
+	ts_fail 403 "forbidden"
+}
+
 # 首次创建管理员时，把旧的单用户数据迁到这个账号下
 ts_migrate_legacy() {
-	_u="$1"
-	_home="$TS_USERS_DIR/$_u"
-	[ -d "$_home" ] || return 1
-	mkdir -p "$_home/progress" 2>/dev/null
-	if [ -d /etc/tingshu/progress ] && [ -z "$(ls -A "$_home/progress" 2>/dev/null)" ]; then
-		cp -a /etc/tingshu/progress/. "$_home/progress/" 2>/dev/null
+	local user home
+	user="$1"
+	home="$TS_USERS_DIR/$user"
+	[ -d "$home" ] || return 1
+	mkdir -p "$home/progress" 2>/dev/null
+	if [ -d /etc/tingshu/progress ] && [ -z "$(ls -A "$home/progress" 2>/dev/null)" ]; then
+		cp -a /etc/tingshu/progress/. "$home/progress/" 2>/dev/null
 	fi
-	[ -f /etc/tingshu/collections.json ] && [ ! -f "$_home/collections.json" ] \
-		&& cp -f /etc/tingshu/collections.json "$_home/collections.json" 2>/dev/null
-	[ -f /etc/tingshu/pausemarks.json ] && [ ! -f "$_home/pausemarks.json" ] \
-		&& cp -f /etc/tingshu/pausemarks.json "$_home/pausemarks.json" 2>/dev/null
-	[ -f /etc/tingshu/layout.json ] && [ ! -f "$_home/layout.json" ] \
-		&& cp -f /etc/tingshu/layout.json "$_home/layout.json" 2>/dev/null
-	chmod 700 "$_home" "$_home/progress" 2>/dev/null
+	[ -f /etc/tingshu/collections.json ] && [ ! -f "$home/collections.json" ] \
+		&& cp -f /etc/tingshu/collections.json "$home/collections.json" 2>/dev/null
+	[ -f /etc/tingshu/pausemarks.json ] && [ ! -f "$home/pausemarks.json" ] \
+		&& cp -f /etc/tingshu/pausemarks.json "$home/pausemarks.json" 2>/dev/null
+	[ -f /etc/tingshu/layout.json ] && [ ! -f "$home/layout.json" ] \
+		&& cp -f /etc/tingshu/layout.json "$home/layout.json" 2>/dev/null
+	chmod 700 "$home" "$home/progress" 2>/dev/null
 	return 0
 }

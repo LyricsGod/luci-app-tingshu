@@ -8,6 +8,7 @@
 #   POST ?action=rescan                       重新扫描并生成 library.json
 #
 # 只允许音频/图片/文本类文件；路径一律拒绝 .. 和绝对路径。
+#
 
 . /usr/lib/tingshu/auth.sh
 ts_require_admin
@@ -25,33 +26,6 @@ if [ -z "$BOOKS_DIR" ]; then
 	fi
 fi
 
-hdr() {
-	printf 'Content-Type: application/json; charset=utf-8\r\n'
-	printf 'Cache-Control: no-store\r\n'
-	printf '\r\n'
-}
-
-ok() {
-	hdr
-	printf '{"ok":true%s}\n' "$1"
-	exit 0
-}
-
-fail() {
-	hdr
-	printf '{"ok":false,"error":"%s"}\n' "$1"
-	exit 0
-}
-
-# %E4%B8%89 -> 三（printf 的 \xHH）
-urldecode() {
-	printf '%b' "$(printf '%s' "$1" | sed 's/%/\\x/g')"
-}
-
-param() {
-	printf '%s' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1
-}
-
 # 相对路径合法性：非空、非绝对、任何一段都不能是 ..
 safe_rel() {
 	[ -n "$1" ] || return 1
@@ -60,17 +34,26 @@ safe_rel() {
 	return 0
 }
 
-qs="${QUERY_STRING:-}"
-action="$(param "$qs" action)"
-[ -n "$action" ] || fail "no action"
+# 文件体积校验：$1 = 路径，$2 = 期望字节数（0 表示不校验）
+size_ok() {
+	local want have
+	want="${2:-0}"
+	ts_is_uint "$want" || want=0
+	[ "$want" = "0" ] && return 0
+	have=$(wc -c < "$1" 2>/dev/null | tr -d ' ')
+	[ "$want" = "$have" ]
+}
 
-[ -d "$BOOKS_DIR" ] || fail "books dir missing"
+action="$(ts_param "${QUERY_STRING:-}" action)"
+[ -n "$action" ] || ts_fail 400 "no action"
+
+[ -d "$BOOKS_DIR" ] || ts_fail 400 "books dir missing"
 
 case "$action" in
 
 upload)
-	rel="$(urldecode "$(param "$qs" p)")"
-	safe_rel "$rel" || fail "bad path"
+	rel="$(ts_urldecode "$(ts_param "$QUERY_STRING" p)")"
+	safe_rel "$rel" || ts_fail 400 "bad path"
 
 	# 只允许音视频/图片/文本，避免往书库里丢可执行文件
 	ext=$(printf '%s' "$rel" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
@@ -78,41 +61,37 @@ upload)
 		mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|webm|ape|wma|\
 		jpg|jpeg|png|webp|gif|bmp|\
 		txt|nfo|m3u|m3u8|json|srt|lrc) ;;
-		*) fail "unsupported type: $ext" ;;
+		*) ts_fail 400 "unsupported type: $ext" ;;
 	esac
 
 	target="$BOOKS_DIR/$rel"
-	dir=$(dirname "$target")
-	mkdir -p "$dir" 2>/dev/null || fail "mkdir failed"
+	mkdir -p "$(dirname "$target")" 2>/dev/null || ts_fail 500 "mkdir failed"
 
-	cat > "$target" 2>/dev/null || fail "write failed"
-
-	want="${CONTENT_LENGTH:-0}"
-	have=$(wc -c < "$target" 2>/dev/null | tr -d ' ')
-	if [ "$want" != "0" ] && [ "$want" != "$have" ]; then
-		rm -f "$target"
-		fail "incomplete upload"
+	# 先写临时文件，校验完整后再替换，避免半截文件留在书库
+	tmp="$target.part.$$"
+	cat > "$tmp" 2>/dev/null || { rm -f "$tmp"; ts_fail 500 "write failed"; }
+	if ! size_ok "$tmp" "${CONTENT_LENGTH:-0}"; then
+		rm -f "$tmp"
+		ts_fail 400 "incomplete upload"
 	fi
+	mv -f "$tmp" "$target" 2>/dev/null || { rm -f "$tmp"; ts_fail 500 "rename failed"; }
 
-	ok ",\"size\":$have"
+	ts_ok ",\"size\":$(wc -c < "$target" | tr -d ' ')"
 	;;
 
 archive)
-	name="$(urldecode "$(param "$qs" n)")"
+	name="$(ts_urldecode "$(ts_param "$QUERY_STRING" n)")"
 	ext=$(printf '%s' "$name" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
 	case "$ext" in
 		zip|tar|gz|tgz) ;;
-		*) fail "unsupported archive: $ext" ;;
+		*) ts_fail 400 "unsupported archive: $ext" ;;
 	esac
 
 	tmp="/tmp/tingshu-up.$$"
-	cat > "$tmp" 2>/dev/null || { rm -f "$tmp"; fail "upload failed"; }
-
-	want="${CONTENT_LENGTH:-0}"
-	have=$(wc -c < "$tmp" 2>/dev/null | tr -d ' ')
-	if [ "$want" != "0" ] && [ "$want" != "$have" ]; then
+	cat > "$tmp" 2>/dev/null || { rm -f "$tmp"; ts_fail 500 "upload failed"; }
+	if ! size_ok "$tmp" "${CONTENT_LENGTH:-0}"; then
 		rm -f "$tmp"
-		fail "incomplete upload"
+		ts_fail 400 "incomplete upload"
 	fi
 
 	# 先解到临时目录，再把顶层内容并进书库
@@ -120,9 +99,9 @@ archive)
 	mkdir -p "$stage" 2>/dev/null
 
 	if [ "$ext" = "zip" ]; then
-		unzip -q -o "$tmp" -d "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; fail "unzip failed"; }
+		unzip -q -o "$tmp" -d "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; ts_fail 500 "unzip failed"; }
 	else
-		tar -xf "$tmp" -C "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; fail "untar failed"; }
+		tar -xf "$tmp" -C "$stage" 2>/dev/null || { rm -rf "$tmp" "$stage"; ts_fail 500 "untar failed"; }
 	fi
 	rm -f "$tmp"
 
@@ -138,36 +117,37 @@ archive)
 	done
 	rm -rf "$stage"
 
-	[ "$moved" -gt 0 ] || fail "nothing extracted"
-	ok ",\"items\":$moved"
+	[ "$moved" -gt 0 ] || ts_fail 500 "nothing extracted"
+	ts_ok ",\"items\":$moved"
 	;;
 
 delete)
-	rel="$(urldecode "$(param "$qs" b)")"
-	safe_rel "$rel" || fail "bad path"
+	rel="$(ts_urldecode "$(ts_param "$QUERY_STRING" b)")"
+	safe_rel "$rel" || ts_fail 400 "bad path"
 
 	target="$BOOKS_DIR/$rel"
-	[ -e "$target" ] || fail "not found"
+	[ -e "$target" ] || ts_fail 404 "not found"
 
+	# 解析真实路径，确认没被软链带到书库外面
 	real=$(readlink -f "$target" 2>/dev/null)
 	root=$(readlink -f "$BOOKS_DIR" 2>/dev/null)
 	case "$real" in
 		"$root"/*) ;;
-		*) fail "outside books dir" ;;
+		*) ts_fail 400 "outside books dir" ;;
 	esac
 
-	rm -rf "$target" 2>/dev/null || fail "delete failed"
-	ok ""
+	rm -rf "$target" 2>/dev/null || ts_fail 500 "delete failed"
+	ts_ok ""
 	;;
 
 rescan)
 	out=$(TINGSHU_WWW_DIR="$WWW_DIR" /usr/lib/tingshu/scan.sh 2>/dev/null | tail -n 1)
 	books=$(printf '%s' "$out" | sed -n 's/.*"books":\([0-9]*\).*/\1/p')
 	tracks=$(printf '%s' "$out" | sed -n 's/.*"tracks":\([0-9]*\).*/\1/p')
-	ok ",\"books\":${books:-0},\"tracks\":${tracks:-0}"
+	ts_ok ",\"books\":${books:-0},\"tracks\":${tracks:-0}"
 	;;
 
 *)
-	fail "unknown action"
+	ts_fail 400 "unknown action"
 	;;
 esac
