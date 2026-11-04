@@ -368,6 +368,36 @@ const check = (name, cond) => results.push([cond ? 'PASS' : 'FAIL', name]);
   press('Escape');
   check('Esc 关闭备份弹层', $('#backupSheet').hidden);
 
+  /* ---- 上传进度里的体积单位（字节不能当 KB 用，否则 3 MB 会显示成 3 GB） ---- */
+  click($('#pickBtn'));
+  check('上传弹层能再次打开', !$('#uploadSheet').hidden);
+
+  const statuses = [];
+  const statusEl = $('#uploadStatus');
+  const nodeDesc = Object.getOwnPropertyDescriptor(w.Node.prototype, 'textContent');
+  Object.defineProperty(statusEl, 'textContent', {
+    configurable: true,
+    get() { return nodeDesc.get.call(this); },
+    set(v) { statuses.push(String(v)); nodeDesc.set.call(this, v); },
+  });
+
+  const folderFile = new w.File([new Uint8Array(3 * 1024 * 1024)], 'a.mp3', { type: 'audio/mpeg' });
+  Object.defineProperty(folderFile, 'webkitRelativePath', { value: '测试书/a.mp3' });
+  const dirInput = $('#uploadDirInput');
+  Object.defineProperty(dirInput, 'files', { value: [folderFile], configurable: true });
+  dirInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 500));
+  check('文件夹上传按 MB 显示已传体积', statuses.some((t) => /正在上传 1\/1 · 3\.0 MB/.test(t)));
+  check('文件夹上传不会把 3 MB 显示成 GB', !statuses.some((t) => /GB/.test(t)));
+
+  click($('#pickBtn'));
+  const archiveFile = new w.File([new Uint8Array(5 * 1024 * 1024)], 'book.tar.gz', { type: 'application/gzip' });
+  const archiveInput = $('#uploadFileInput');
+  Object.defineProperty(archiveInput, 'files', { value: [archiveFile], configurable: true });
+  archiveInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+  check('压缩包上传按 MB 显示体积', /book\.tar\.gz（5\.0 MB）/.test($('#uploadStatus').textContent));
+  await new Promise((r) => setTimeout(r, 300));
+
   check('没有未捕获异常', errors.length === 0);
 
   for (const [state, name] of results) console.log(state.padEnd(5), name);

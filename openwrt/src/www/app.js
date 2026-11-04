@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.6.6';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.6.7';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -2352,7 +2352,8 @@
   let backupMode = 'user';
   let backupMeta = null;
 
-  function fmtSize(kb) {
+  /** KB → 可读体积（备份接口给的是 KB，和上传用的 fmtSize(字节) 不是一回事） */
+  function fmtKb(kb) {
     if (!Number.isFinite(kb) || kb <= 0) return '0 B';
     if (kb >= 1024 * 1024) return (kb / 1024 / 1024).toFixed(2) + ' GB';
     if (kb >= 1024) return (kb / 1024).toFixed(1) + ' MB';
@@ -2370,8 +2371,8 @@
   function updateBackupSize() {
     if (!backupMeta || !el.backupSize) return;
     const kb = (backupMeta.sizes || {})[backupMode] || 0;
-    let text = '「' + (BACKUP_LABELS[backupMode] || backupMode) + '」预计 ' + fmtSize(kb);
-    if (backupMeta.freeKb) text += ' · 路由器可用空间 ' + fmtSize(backupMeta.freeKb);
+    let text = '「' + (BACKUP_LABELS[backupMode] || backupMode) + '」预计 ' + fmtKb(kb);
+    if (backupMeta.freeKb) text += ' · 路由器可用空间 ' + fmtKb(backupMeta.freeKb);
     if (backupMode === 'media' || backupMode === 'full') {
       text += '。包含音频，下载时间会很长，建议用电脑操作。';
     }
