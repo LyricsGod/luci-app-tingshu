@@ -32,6 +32,7 @@ uhttpd(:8686) ──► /tmp/tingshu/www        网页本体 + library.json（�
 - 选集目录与章节滚动条独立成一个容器：目录在卡片内部滚动，上方书籍资料保持不动；右侧章号条只覆盖目录区，可点击 / 拖动快速跳章，网页端与安卓端行为一致
 - 手机端目录容器吃掉剩余高度，一直贴到页面底部；有迷你播放器时自动缩短并贴住播放器上沿，不需要写死高度（网页端靠 `#pageScroll` 的 `calc(100% - --mini-h)`，安卓端靠 `Scaffold` 的 `bottomBar` padding）
 - 打开书籍自动定位到「继续收听」的那一章并高亮；从没听过的书停在第 1 章，切换正序 / 倒序会重新定位，刷新渲染不会抢走手动滚动的位置
+- 播放器页右上角「目录」按钮直接打开这本书的书籍页并定位到正在播放的章节，不再弹单独的章节弹层；网页端「当前章节」按钮行为一致，两端都只有一个目录入口
 
 **管**
 
@@ -60,7 +61,7 @@ uhttpd(:8686) ──► /tmp/tingshu/www        网页本体 + library.json（�
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-tingshu_1.6.13-1_all.ipk
+opkg install /tmp/luci-app-tingshu_1.6.14-1_all.ipk
 ```
 
 装完自动启用并启动服务，打开 LuCI 的 **服务 → 听书** 配置。依赖 `uhttpd` 和 `luci-base`，正常装了 LuCI 的固件都有。
@@ -236,8 +237,8 @@ android/                             安卓客户端（Kotlin + Compose + Media3
 
 ```sh
 git push origin main
-git tag -a v1.6.13 -m "听书 1.6.13"
-git push origin v1.6.13
+git tag -a v1.6.14 -m "听书 1.6.14"
+git push origin v1.6.14
 ```
 
 标签必须和 `APP_VERSION` 一致（`v` + 版本号），Release 页面：<https://github.com/LyricsGod/luci-app-tingshu/releases>

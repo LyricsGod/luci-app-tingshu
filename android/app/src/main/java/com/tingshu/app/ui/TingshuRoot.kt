@@ -158,11 +158,13 @@ fun TingshuRoot(vm: TingshuViewModel) {
                         },
                         onSleepChapterEnd = { vm.setSleepAtChapterEnd() },
                         onCancelSleep = { vm.cancelSleep() },
-                        onSelectChapter = { index ->
-                            if (playerBook != null && playerState.bookId == playerBook.id) {
-                                vm.playAt(index)
-                            } else if (playerBook != null) {
-                                vm.playBook(playerBook, startIndex = index, fromBeginning = true)
+                        onOpenChapters = {
+                            val id = playerState.bookId
+                            if (!id.isNullOrBlank()) {
+                                currentBookId = id
+                                // 「目录」＝打开正在播放的这本书的书籍页。
+                                // 栈重排成「书架 → 书籍」，返回直接回书架，和从书架点开一本书一致。
+                                stackText = NavStack.ROUTE_LIBRARY + "|book"
                             }
                         },
                         onVolume = { vm.setVolume(it) },

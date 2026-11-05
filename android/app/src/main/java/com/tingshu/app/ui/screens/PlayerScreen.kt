@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,7 +33,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -89,7 +85,7 @@ fun PlayerScreen(
     onSleepMinutes: (Int, Boolean) -> Unit,
     onSleepChapterEnd: () -> Unit,
     onCancelSleep: () -> Unit,
-    onSelectChapter: (Int) -> Unit,
+    onOpenChapters: () -> Unit,
     onVolume: (Float) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -114,7 +110,6 @@ fun PlayerScreen(
         return
     }
 
-    var showChapters by remember { mutableStateOf(false) }
     var showSpeed by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
     var finishChapter by remember(sleep.active, sleep.finishCurrentChapter) {
@@ -172,7 +167,7 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                IconButton(onClick = { showChapters = true }) {
+                IconButton(onClick = onOpenChapters) {
                     Icon(Icons.AutoMirrored.Rounded.MenuBook, "目录", tint = colors.onSurfaceVariant)
                 }
             }
@@ -315,20 +310,6 @@ fun PlayerScreen(
                         text = sleepLabel(sleep, now),
                         style = MaterialTheme.typography.labelMedium,
                         color = if (sleep.active) colors.primary else colors.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = { showChapters = true }) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.MenuBook,
-                        contentDescription = null,
-                        tint = colors.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = "目录",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant,
                     )
                 }
             }
@@ -487,65 +468,6 @@ fun PlayerScreen(
         )
     }
 
-    if (showChapters) {
-        ModalBottomSheet(
-            onDismissRequest = { showChapters = false },
-            containerColor = colors.surface,
-        ) {
-            Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("目录", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "${book.chapterCount} 章",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                }
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
-                    itemsIndexed(book.tracks) { index, track ->
-                        val active = index == state.index
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onSelectChapter(index)
-                                    showChapters = false
-                                }
-                                .padding(horizontal = 20.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "${index + 1}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (active) colors.primary else colors.onSurfaceVariant,
-                                modifier = Modifier.width(30.dp),
-                            )
-                            Text(
-                                text = track.title,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (active) colors.primary else colors.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (active) {
-                                Icon(
-                                    imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = null,
-                                    tint = colors.primary,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 private fun sleepLabel(sleep: SleepState, now: Long): String {
