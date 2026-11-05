@@ -62,11 +62,11 @@ import com.tingshu.app.ui.SleepState
 import com.tingshu.app.ui.components.BookCover
 import com.tingshu.app.ui.components.formatSpeed
 import com.tingshu.app.ui.components.formatTime
+import com.tingshu.app.ui.dialogs.SleepDialog
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 private val SPEEDS = listOf(0.5f, 0.75f, 0.9f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
-private val SLEEP_MINUTES = listOf(15, 30, 45, 60, 90)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,9 +112,6 @@ fun PlayerScreen(
 
     var showSpeed by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
-    var finishChapter by remember(sleep.active, sleep.finishCurrentChapter) {
-        mutableStateOf(sleep.finishCurrentChapter)
-    }
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -383,88 +380,12 @@ fun PlayerScreen(
     }
 
     if (showSleep) {
-        AlertDialog(
-            onDismissRequest = { showSleep = false },
-            title = { Text("定时关闭") },
-            text = {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("到点后播完本集再暂停", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "计时结束时先听完当前这一集",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = finishChapter,
-                            onCheckedChange = { finishChapter = it },
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    SLEEP_MINUTES.forEach { minutes ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable {
-                                    onSleepMinutes(minutes, finishChapter)
-                                    showSleep = false
-                                }
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = sleep.active && !sleep.atChapterEnd && sleep.minutes == minutes,
-                                onClick = {
-                                    onSleepMinutes(minutes, finishChapter)
-                                    showSleep = false
-                                },
-                            )
-                            Text("$minutes 分钟", style = MaterialTheme.typography.bodyLarge)
-                        }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable {
-                                onSleepChapterEnd()
-                                showSleep = false
-                            }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = sleep.active && sleep.atChapterEnd,
-                            onClick = {
-                                onSleepChapterEnd()
-                                showSleep = false
-                            },
-                        )
-                            Text("本章播完后暂停", style = MaterialTheme.typography.bodyLarge)
-                    }
-                    if (sleep.active) {
-                        TextButton(
-                            onClick = {
-                                onCancelSleep()
-                                showSleep = false
-                            },
-                        ) {
-                            Text("关闭定时", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSleep = false }) { Text("取消") }
-            },
+        SleepDialog(
+            sleep = sleep,
+            onDismiss = { showSleep = false },
+            onMinutes = { minutes, finish -> onSleepMinutes(minutes, finish) },
+            onChapterEnd = onSleepChapterEnd,
+            onCancel = onCancelSleep,
         )
     }
 

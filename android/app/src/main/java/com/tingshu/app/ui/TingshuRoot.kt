@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tingshu.app.ui.components.MiniPlayer
+import com.tingshu.app.ui.dialogs.SleepDialog
 import com.tingshu.app.ui.screens.AuthScreen
 import com.tingshu.app.ui.screens.BookScreen
 import com.tingshu.app.ui.screens.CollectionScreen
@@ -217,34 +218,14 @@ fun TingshuRoot(vm: TingshuViewModel) {
         }
     }
 
-    // 迷你播放器上的定时按钮直接弹出设置，不用再跳到播放器页多走一步
+    // 迷你播放器上的定时按钮直接弹出设置，和播放界面用的是同一个弹窗
     if (showMiniSleep) {
-        AlertDialog(
-            onDismissRequest = { showMiniSleep = false },
-            title = { Text("定时关闭") },
-            text = {
-                Column {
-                    listOf(15, 30, 45, 60, 90).forEach { minutes ->
-                        TextButton(onClick = {
-                            vm.setSleepMinutes(minutes, sleep.finishCurrentChapter)
-                            showMiniSleep = false
-                        }) { Text("$minutes 分钟后暂停") }
-                    }
-                    TextButton(onClick = {
-                        vm.setSleepAtChapterEnd()
-                        showMiniSleep = false
-                    }) { Text("本章播完后暂停") }
-                    if (sleep.active) {
-                        TextButton(onClick = {
-                            vm.cancelSleep()
-                            showMiniSleep = false
-                        }) { Text("关闭定时", color = MaterialTheme.colorScheme.error) }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showMiniSleep = false }) { Text("取消") }
-            },
+        SleepDialog(
+            sleep = sleep,
+            onDismiss = { showMiniSleep = false },
+            onMinutes = { minutes, finish -> vm.setSleepMinutes(minutes, finish) },
+            onChapterEnd = { vm.setSleepAtChapterEnd() },
+            onCancel = { vm.cancelSleep() },
         )
     }
 }
