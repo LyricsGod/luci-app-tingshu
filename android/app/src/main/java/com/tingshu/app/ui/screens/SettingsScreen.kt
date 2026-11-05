@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -82,6 +83,7 @@ fun SettingsScreen(
     val authUser by vm.authUser.collectAsStateWithLifecycle()
     val authRole by vm.authRole.collectAsStateWithLifecycle()
     val columns by vm.columns.collectAsStateWithLifecycle()
+    val miniAnimMs by vm.miniAnimMs.collectAsStateWithLifecycle()
     val isAdmin = authRole == "admin"
 
     // 存完整地址（含协议/端口），分栏组件会自己拆开显示
@@ -211,6 +213,33 @@ fun SettingsScreen(
                             selected = columns == n,
                             onClick = { vm.setColumns(n) },
                             label = { Text("$n 列") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = colors.primaryContainer,
+                                selectedLabelColor = colors.primary,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            SectionCard("迷你播放器") {
+                Text(
+                    "首次出现时从下往上滑入的时长（默认 0.5 秒）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(
+                        0 to "关闭", 300 to "0.3s", 500 to "0.5s",
+                        1000 to "1s", 1500 to "1.5s", 2000 to "2s",
+                    ).forEach { (ms, label) ->
+                        FilterChip(
+                            selected = miniAnimMs == ms,
+                            onClick = { vm.setMiniAnimMs(ms) },
+                            label = { Text(label) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = colors.primaryContainer,
                                 selectedLabelColor = colors.primary,

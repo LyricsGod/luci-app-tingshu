@@ -61,6 +61,11 @@ class AppPrefs(context: Context) {
         get() = prefs.getInt(KEY_COLUMNS, 2)
         set(value) = edit { putInt(KEY_COLUMNS, value.coerceIn(2, 5)) }
 
+    /** 迷你播放器从下往上滑入的动画时长（毫秒），0 表示直接出现。 */
+    var miniAnimMs: Int
+        get() = prefs.getInt(KEY_MINI_ANIM, 500)
+        set(value) = edit { putInt(KEY_MINI_ANIM, value.coerceIn(0, 3000)) }
+
     private companion object {
         const val KEY_SERVER = "server_url"
         const val KEY_SPEED = "playback_speed"
@@ -72,5 +77,6 @@ class AppPrefs(context: Context) {
         const val KEY_USER = "auth_user"
         const val KEY_ROLE = "auth_role"
         const val KEY_COLUMNS = "layout_columns"
+        const val KEY_MINI_ANIM = "mini_anim_ms"
     }
 }

@@ -7,15 +7,24 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -95,11 +104,26 @@ fun TingshuRoot(vm: TingshuViewModel) {
     val currentBook = books.firstOrNull { it.id == currentBookId }
     val playerBook = books.firstOrNull { it.id == playerState.bookId }
     val showMini = playerState.bookId != null && route != "player"
+    val miniAnimMs by vm.miniAnimMs.collectAsStateWithLifecycle()
+    // 迷你播放器上的定时按钮：直接弹定时设置，不再只把人送到播放器页
+    var showMiniSleep by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (showMini) {
+            // 第一次出现迷你播放器时从屏幕下方滑上来；时长在设置页可调，默认 0.5 秒。
+            // AnimatedVisibility 只在 visible 由 false 变 true 时播 enter，切页面不会反复播。
+            AnimatedVisibility(
+                visible = showMini,
+                enter = slideInVertically(
+                    initialOffsetY = { fullHeight -> fullHeight },
+                    animationSpec = tween(durationMillis = miniAnimMs),
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { fullHeight -> fullHeight },
+                    animationSpec = tween(durationMillis = miniAnimMs),
+                ),
+            ) {
                 MiniPlayer(
                     book = playerBook,
                     state = playerState,
@@ -107,7 +131,7 @@ fun TingshuRoot(vm: TingshuViewModel) {
                     onToggle = { vm.togglePlayback() },
                     onNext = { vm.nextChapter() },
                     onSpeed = { vm.setSpeed(nextSpeed(playerState.speed)) },
-                    onTimer = { go("player") },
+                    onTimer = { showMiniSleep = true },
                 )
             }
         },
@@ -191,6 +215,37 @@ fun TingshuRoot(vm: TingshuViewModel) {
                 )
             }
         }
+    }
+
+    // 迷你播放器上的定时按钮直接弹出设置，不用再跳到播放器页多走一步
+    if (showMiniSleep) {
+        AlertDialog(
+            onDismissRequest = { showMiniSleep = false },
+            title = { Text("定时关闭") },
+            text = {
+                Column {
+                    listOf(15, 30, 45, 60, 90).forEach { minutes ->
+                        TextButton(onClick = {
+                            vm.setSleepMinutes(minutes, sleep.finishCurrentChapter)
+                            showMiniSleep = false
+                        }) { Text("$minutes 分钟后暂停") }
+                    }
+                    TextButton(onClick = {
+                        vm.setSleepAtChapterEnd()
+                        showMiniSleep = false
+                    }) { Text("本章播完后暂停") }
+                    if (sleep.active) {
+                        TextButton(onClick = {
+                            vm.cancelSleep()
+                            showMiniSleep = false
+                        }) { Text("关闭定时", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMiniSleep = false }) { Text("取消") }
+            },
+        )
     }
 }
 

@@ -115,6 +115,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val authError = MutableStateFlow<String?>(null)
     val authConfigured = MutableStateFlow(true)
     val columns = MutableStateFlow(prefs.columns)
+    /** 迷你播放器滑入动画时长（毫秒），设置页可调，0 表示不播动画。 */
+    val miniAnimMs = MutableStateFlow(prefs.miniAnimMs)
     val users = MutableStateFlow<List<TingshuApi.UserInfo>>(emptyList())
     val usersLoading = MutableStateFlow(false)
     val usersError = MutableStateFlow<String?>(null)
@@ -364,6 +366,12 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         if (base.isNotBlank()) {
             viewModelScope.launch(Dispatchers.IO) { runCatching { api.pushLayoutColumns(base, next) } }
         }
+    }
+
+    fun setMiniAnimMs(value: Int) {
+        val next = value.coerceIn(0, 3000)
+        miniAnimMs.value = next
+        prefs.miniAnimMs = next
     }
 
     fun loadUsers() {

@@ -168,7 +168,7 @@ fun BookScreen(
 
     fun start(fromBeginning: Boolean = false) {
         vm.playBook(book, fromBeginning = fromBeginning)
-        onOpenPlayer()
+        // 播放后留在书籍页，让迷你播放器从下方滑入，不再跳全屏播放器
     }
 
     Scaffold(
@@ -421,8 +421,8 @@ fun BookScreen(
                             if (playing) {
                                 vm.togglePlayback()
                             } else {
+                                // 继续播放只唤起迷你播放器，留在书籍页，不跳全屏播放器页
                                 if (isCurrent) vm.togglePlayback() else vm.playBook(book)
-                                onOpenPlayer()
                             }
                         },
                         modifier = Modifier.weight(1f).height(46.dp),
