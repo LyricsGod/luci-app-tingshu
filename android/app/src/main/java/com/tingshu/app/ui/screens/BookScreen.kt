@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,18 +27,15 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.AlertDialog
@@ -133,6 +129,8 @@ fun BookScreen(
     var showCollections by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmUnread by remember { mutableStateOf(false) }
+    // 点封面才弹出简介，书籍页不再常驻显示
+    var showDescription by remember { mutableStateOf(false) }
     // 书籍页小字第二行：默认显示剩余时长，点一下切成已听/共
     var showListened by rememberSaveable(book.id) { mutableStateOf(false) }
     // 章节多选：批量标已读 / 未读
@@ -195,6 +193,29 @@ fun BookScreen(
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
+                                text = { Text("全本已读") },
+                                enabled = book.chapterCount > 0,
+                                onClick = {
+                                    menuOpen = false
+                                    vm.markAllChaptersRead(book)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("全本未读") },
+                                enabled = book.chapterCount > 0,
+                                onClick = {
+                                    menuOpen = false
+                                    confirmUnread = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("从头开始") },
+                                onClick = {
+                                    menuOpen = false
+                                    start(fromBeginning = true)
+                                },
+                            )
+                            DropdownMenuItem(
                                 text = { Text(if (collection == null) "加入合集" else "合集：${collection.name}") },
                                 onClick = {
                                     menuOpen = false
@@ -210,20 +231,6 @@ fun BookScreen(
                                     },
                                 )
                             }
-                            DropdownMenuItem(
-                                text = { Text("暂停记录") },
-                                onClick = {
-                                    menuOpen = false
-                                    showMarks = true
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("从头开始") },
-                                onClick = {
-                                    menuOpen = false
-                                    start(fromBeginning = true)
-                                },
-                            )
                         }
                     }
                 },
@@ -262,7 +269,9 @@ fun BookScreen(
                         modifier = Modifier
                             .width(112.dp)
                             .height(112.dp)
-                            .shadow(12.dp, RoundedCornerShape(16.dp)),
+                            .shadow(12.dp, RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showDescription = true },
                         corner = 16.dp,
                     )
                     Spacer(Modifier.width(16.dp))
@@ -435,73 +444,18 @@ fun BookScreen(
                         )
                     }
                     OutlinedButton(
-                        onClick = { start(fromBeginning = true) },
+                        onClick = { showMarks = true },
                         modifier = Modifier.height(46.dp),
                         shape = RoundedCornerShape(13.dp),
                     ) {
-                        Icon(Icons.Rounded.Replay, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("从头", fontSize = 12.sp)
-                    }
-                }
-            }
-
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val tight = PaddingValues(horizontal = 8.dp)
-                    TextButton(onClick = { showMarks = true }, contentPadding = tight) {
-                        Icon(Icons.Rounded.Timer, null, Modifier.size(16.dp))
+                        Icon(Icons.Rounded.Timer, null, Modifier.size(17.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("暂停记录", fontSize = 12.sp)
                     }
-                    TextButton(
-                        onClick = { vm.markAllChaptersRead(book) },
-                        enabled = book.chapterCount > 0,
-                        contentPadding = tight,
-                    ) {
-                        Text("全本已读", fontSize = 12.sp)
-                    }
-                    TextButton(
-                        onClick = { confirmUnread = true },
-                        enabled = book.chapterCount > 0,
-                        contentPadding = tight,
-                    ) {
-                        Text("全本未读", fontSize = 12.sp)
-                    }
-                    if (isAdmin) {
-                        TextButton(onClick = { showEdit = true }, contentPadding = tight) {
-                            Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("编辑资料", fontSize = 12.sp)
-                        }
-                    }
-                    TextButton(onClick = { showCollections = true }, contentPadding = tight) {
-                        Icon(Icons.Rounded.Folder, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (collection == null) "加入合集" else "合集", fontSize = 12.sp)
-                    }
                 }
             }
 
-            if (book.description.isNotBlank()) {
-                item {
-                    Text(
-                        text = book.description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                        lineHeight = 22.sp,
-                    )
-                }
-            }
-
+            // 工具项已收进右上角菜单；简介改为点封面弹出，书籍页不再常驻占地方
         }   // 头部 LazyColumn 结束：上面只放书籍资料，不再放章节
 
         // 目录容器：weight(1f) 吃掉剩余高度，直接贴到页面底部
@@ -586,6 +540,24 @@ fun BookScreen(
             }
         }
         }
+    }
+
+    // 点封面弹出简介：把原来常驻的一大段文字收起来，给目录多留空间
+    if (showDescription) {
+        AlertDialog(
+            onDismissRequest = { showDescription = false },
+            title = { Text(book.title) },
+            text = {
+                Text(
+                    text = book.description.ifBlank { "这本书还没有简介，可以在右上角菜单的「编辑资料」里补一段。" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    lineHeight = 22.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDescription = false }) { Text("关闭") }
+            },
+        )
     }
 
     if (confirmUnread) {
