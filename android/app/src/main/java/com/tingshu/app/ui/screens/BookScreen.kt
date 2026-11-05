@@ -1,5 +1,6 @@
 package com.tingshu.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -17,11 +18,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -142,10 +146,27 @@ fun BookScreen(
     val displayIndices: List<Int> = remember(book.tracks, ascending) {
         if (ascending) book.tracks.indices.toList() else book.tracks.indices.reversed().toList()
     }
-    val chapterStart = (chapterListState.layoutInfo.totalItemsCount - book.chapterCount).coerceAtLeast(0)
-    val visibleChapterPos = (chapterListState.firstVisibleItemIndex - chapterStart)
+    // 章节列表已搬进独立容器，列表里只剩章节项，不必再扣掉头部的 item 数
+    val visibleChapterPos = chapterListState.firstVisibleItemIndex
         .coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
     val visibleChapterNumber = displayIndices.getOrNull(visibleChapterPos)?.plus(1) ?: 1
+
+    // 打开书籍时把目录定位到「继续收听」的那一章；切换正/倒序时再定位一次
+    var resumeLocated by rememberSaveable(book.id) { mutableStateOf(false) }
+    fun resumeChapterPos(): Int {
+        val idx = (if (isCurrent) playerState.index else (record?.index ?: 0))
+            .coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
+        return if (ascending) idx else (book.chapterCount - 1 - idx)
+    }
+    LaunchedEffect(book.id, record?.index) {
+        if (resumeLocated || book.chapterCount <= 0) return@LaunchedEffect
+        chapterListState.scrollToItem(resumeChapterPos())
+        resumeLocated = true
+    }
+    LaunchedEffect(ascending) {
+        if (!resumeLocated || book.chapterCount <= 0) return@LaunchedEffect
+        chapterListState.scrollToItem(resumeChapterPos())
+    }
 
     fun start(fromBeginning: Boolean = false) {
         vm.playBook(book, fromBeginning = fromBeginning)
@@ -221,10 +242,18 @@ fun BookScreen(
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
         Box(Modifier.fillMaxSize()) {
+        // 头部资料按内容高度占一块，目录容器吃掉剩余高度贴到页面底部。
+        // BoxWithConstraints 的 maxHeight 已经扣掉外层 Scaffold 的 MiniPlayer 高度，
+        // 有迷你播放器时目录会自动变矮，不需要写死数值。
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+        // 先在外层取可用高度：ColumnScope 里直接用 maxHeight 会和隐式 receiver 冲突
+        val availableHeight = maxHeight
+        Column(Modifier.fillMaxSize()) {
         LazyColumn(
-            state = chapterListState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = if (selecting) 118.dp else 32.dp, end = 34.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = (availableHeight - 220.dp).coerceAtLeast(120.dp)),
+            contentPadding = PaddingValues(bottom = if (selecting) 118.dp else 8.dp),
         ) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
@@ -473,37 +502,31 @@ fun BookScreen(
                 }
             }
 
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("目录", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "${book.chapterCount} 章",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = {
-                        selecting = !selecting
-                        selected = emptySet()
-                    }) {
-                        Icon(Icons.Rounded.Check, null, Modifier.size(15.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text(if (selecting) "完成" else "多选", fontSize = 12.sp)
-                    }
-                    TextButton(onClick = { ascending = !ascending }) {
-                        Icon(Icons.Rounded.SwapVert, null, Modifier.size(15.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text(if (ascending) "倒序" else "正序", fontSize = 12.sp)
-                    }
-                }
-            }
+        }   // 头部 LazyColumn 结束：上面只放书籍资料，不再放章节
 
+        // 目录容器：weight(1f) 吃掉剩余高度，直接贴到页面底部
+        ChapterPanel(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            count = book.chapterCount,
+            selecting = selecting,
+            onToggleSelect = {
+                selecting = !selecting
+                selected = emptySet()
+            },
+            ascending = ascending,
+            onToggleOrder = { ascending = !ascending },
+            listState = chapterListState,
+            visiblePos = visibleChapterPos,
+            visibleNumber = visibleChapterNumber,
+            onSeek = { target ->
+                seekJob?.cancel()
+                seekJob = scope.launch {
+                    chapterListState.scrollToItem(
+                        target.coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
+                    )
+                }
+            },
+        ) {
             itemsIndexed(displayIndices, key = { _, actualIndex -> actualIndex }) { _, actualIndex ->
                 val track = book.tracks[actualIndex]
                 val isPlayingThis = isCurrent && playerState.index == actualIndex
@@ -528,26 +551,10 @@ fun BookScreen(
                 )
             }
         }
+        }   // Column
+        }   // BoxWithConstraints
 
-            if (book.chapterCount > 3) {
-                ChapterScrollBar(
-                    total = book.chapterCount,
-                    value = visibleChapterPos,
-                    label = visibleChapterNumber,
-                    onSeek = { target ->
-                        seekJob?.cancel()
-                        seekJob = scope.launch {
-                            val maxIndex = (chapterListState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                            chapterListState.scrollToItem((chapterStart + target).coerceIn(0, maxIndex))
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 4.dp, top = 8.dp, bottom = 12.dp)
-                        .width(30.dp)
-                        .fillMaxHeight(),
-                )
-            }
+            // 章节定位条已随目录一起搬进 ChapterPanel，只覆盖目录卡片，不再贯穿整页
 
             if (selecting) {
                 SelectionBar(
@@ -613,6 +620,85 @@ fun BookScreen(
     }
     if (showCollections) {
         AddToCollectionDialog(vm = vm, book = book, onDismiss = { showCollections = false })
+    }
+}
+
+/**
+ * 选集目录独立容器：目录标题、章节列表、章节定位滚动条都收进这一张卡片。
+ * 卡片高度固定，章节只在卡片内部滚动，滚动条也只覆盖卡片本身；
+ * 上方的书籍资料不会被一起卷走，也不会被右侧透明手势层挡住。
+ */
+@Composable
+private fun ChapterPanel(
+    modifier: Modifier = Modifier,
+    count: Int,
+    selecting: Boolean,
+    onToggleSelect: () -> Unit,
+    ascending: Boolean,
+    onToggleOrder: () -> Unit,
+    listState: LazyListState,
+    visiblePos: Int,
+    visibleNumber: Int,
+    onSeek: (Int) -> Unit,
+    content: LazyListScope.() -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant),
+        shadowElevation = 1.dp,
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("目录", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "$count 章",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onToggleSelect) {
+                    Icon(Icons.Rounded.Check, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text(if (selecting) "完成" else "多选", fontSize = 12.sp)
+                }
+                TextButton(onClick = onToggleOrder) {
+                    Icon(Icons.Rounded.SwapVert, null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text(if (ascending) "倒序" else "正序", fontSize = 12.sp)
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(end = 34.dp, bottom = 8.dp),
+                    content = content,
+                )
+                if (count > 3) {
+                    ChapterScrollBar(
+                        total = count,
+                        value = visiblePos,
+                        label = visibleNumber,
+                        onSeek = onSeek,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 4.dp, top = 6.dp, bottom = 10.dp)
+                            .width(30.dp)
+                            .fillMaxHeight(),
+                    )
+                }
+            }
+        }
     }
 }
 

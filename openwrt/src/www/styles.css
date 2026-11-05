@@ -415,6 +415,132 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
 .track-tools .tt-gap { flex: 1; min-width: 4px; }
 .track-tools .btn[disabled] { opacity: .45; cursor: default; }
 
+/* ---------------- 选集目录独立容器 ----------------
+   目录标题、章节列表、章节定位条一起收进一张卡片：
+   卡片高度固定，列表在卡片内部滚动，滚动条只覆盖卡片本身，
+   不再跟着整页一起滚，也不会压到上方的书籍资料。 */
+.track-panel {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.track-panel > .track-tools {
+  margin: 0;
+  padding: 13px 16px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.track-panel-body {
+  position: relative;
+  height: clamp(260px, 44vh, 520px);
+}
+.track-scroller {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 40px 12px 10px;
+  scrollbar-color: var(--line) transparent;
+}
+.track-scroller::-webkit-scrollbar { width: 8px; }
+.track-scroller::-webkit-scrollbar-thumb {
+  background: var(--line); border: 2px solid transparent;
+  background-clip: content-box; border-radius: 8px;
+}
+.track-scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--muted); background-clip: content-box;
+}
+.track-scroller::-webkit-scrollbar-track { background: transparent; }
+
+/* 章节快速定位条：只作用于目录容器，可点可拖 */
+.track-scrollbar {
+  position: absolute;
+  top: 8px; right: 4px; bottom: 8px;
+  width: 30px;
+  z-index: 2;
+  touch-action: none;
+  user-select: none;
+  cursor: pointer;
+}
+.track-scrollbar[hidden] { display: none; }
+.tsb-rail {
+  position: absolute;
+  left: 13px; top: 0; bottom: 0;
+  width: 3px; border-radius: 3px;
+  background: var(--line);
+}
+.tsb-thumb {
+  position: absolute;
+  left: 1px; top: 0;
+  width: 28px; height: 38px;
+  display: grid; place-items: center;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px; font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-sm);
+  will-change: transform;
+}
+.track-scrollbar.active .tsb-thumb { height: 44px; }
+
+/* 打开书籍时定位到的「继续收听」章节 */
+.track-item.resume-here {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.track-item.resume-here .t-name { color: var(--text); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .track-panel { border-radius: 15px; }
+  .track-panel-body { height: clamp(240px, 40vh, 420px); }
+  .track-scroller { padding-right: 36px; }
+  .track-panel > .track-tools { padding: 12px 12px 10px; }
+}
+
+/* ---------------- 书籍页：目录容器贴底 ----------------
+   目录卡片吃掉 #pageScroll 的剩余高度，直接贴到页面底部。
+   有迷你播放器时 #pageScroll 已是 calc(100% - --mini-h)，
+   这里不用再算播放器高度，卡片会自动缩短 / 伸长。 */
+body.book-open #pageScroll { display: flex; flex-direction: column; }
+body.book-open #main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+body.book-open #bookView:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+body.book-open .track-panel {
+  flex: 1 1 auto;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+}
+body.book-open .track-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+/* 父高度由 flex 分配，铺满比 height:100% 更稳 */
+body.book-open .track-scroller {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+@media (max-width: 640px) {
+  body.book-open #main { padding-top: 6px; padding-bottom: 4px; }
+  body.book-open .book-hero { margin-bottom: 14px; }
+  body.book-open .track-panel { min-height: 180px; }
+}
+
 /* 多选时每章前面的勾选框 */
 .track-item .t-check {
   width: 18px; height: 18px; flex: none; border-radius: 50%;

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>听书 · 选集目录独立容器 效果预览</title>
+<style>
+:root{
+  --bg:#f5f1ea; --bg2:#efe9df;
+  --surface:#fffdf9; --surface-2:#f8f4ec;
+  --line:#e4dbcd; --line-soft:#ece4d8;
+  --text:#241f19; --text-2:#4d453b; --muted:#8a8072;
+  --accent:#b4643c; --accent-soft:#f2e2d6; --accent-line:#e6c9b4;
+  --shadow-sm:0 1px 2px rgba(60,44,28,.06),0 2px 8px rgba(60,44,28,.05);
+  --shadow-lg:0 10px 30px rgba(60,44,28,.10),0 30px 70px rgba(60,44,28,.16);
+  --serif:"Songti SC","Noto Serif SC",Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--sans);color:var(--text);background:
+  radial-gradient(1100px 520px at 10% -8%,#fdf9f2 0%,#f2ece3 58%,#e9e2d7 100%);
+  min-height:100vh;padding:30px clamp(16px,4vw,44px) 50px}
+.page{max-width:1360px;margin:0 auto}
+
+.doc-head{margin-bottom:24px}
+.tag{display:inline-block;font-size:11.5px;letter-spacing:.04em;color:#7a4b12;
+  background:var(--warn,#f4e3c8);border:1px solid #e4c79d;border-radius:20px;padding:5px 12px;font-weight:650}
+h1{font-family:var(--serif);font-size:clamp(24px,3vw,34px);margin:14px 0 6px;letter-spacing:.02em}
+.sub{color:var(--muted);font-size:14px;margin:0 0 18px}
+.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+button{font-family:inherit;font-size:13px;cursor:pointer;border-radius:10px;padding:9px 16px;
+  border:1px solid var(--line);background:var(--surface);color:var(--text-2);transition:.16s}
+button:hover{border-color:var(--accent-line);color:var(--text)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primary:hover{filter:brightness(1.06);color:#fff}
+.hint{font-size:12px;color:var(--muted)}
+.mode-note{margin-top:12px;font-size:12.5px;color:var(--muted);background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:9px 13px;display:none}
+.mode-note.show{display:block}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;
+  background:#2a231b;color:#f8f1e6;font-size:13px;padding:11px 20px;border-radius:12px;
+  box-shadow:var(--shadow-lg);opacity:0;transition:.25s;pointer-events:none}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(-4px)}
+
+.stage{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start;justify-content:center}
+.device-col{flex:1 1 420px;min-width:330px;max-width:660px}
+.device-label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;color:var(--text-2);margin:0 0 12px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.dot.web{background:#5b8ca8}.dot.and{background:#6a9b72}
+
+/* ---------- 设备外壳 ---------- */
+.window,.phone{background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden}
+.window{border-radius:14px}
+.win-bar{height:38px;background:var(--surface-2);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:12px;padding:0 14px}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:#d9cfc0}
+.dots i:nth-child(1){background:#e0a497}.dots i:nth-child(2){background:#e6cf94}.dots i:nth-child(3){background:#a9c7a4}
+.addr{font-size:11.5px;color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:7px;padding:4px 12px;flex:1;text-align:center}
+.phone{width:100%;max-width:360px;margin:0 auto;border-radius:30px;border:8px solid #2a2621;
+  box-shadow:0 18px 46px rgba(40,30,20,.28)}
+.phone-bar{height:26px;background:var(--surface);display:flex;align-items:center;justify-content:space-between;
+  padding:0 18px;font-size:10.5px;color:var(--text-2);font-weight:600}
+.app-bar{height:48px;background:var(--surface);border-bottom:1px solid var(--line-soft);
+  display:flex;align-items:center;gap:14px;padding:0 16px;font-size:14px;font-weight:600}
+.app-bar .more{margin-left:auto;color:var(--muted);font-size:18px;line-height:1}
+
+.screen{background:var(--bg);position:relative;display:flex;flex-direction:column}
+.web-screen{height:520px}
+.phone{display:flex;flex-direction:column;height:566px}
+.phone-bar,.app-bar{flex:none}
+.a-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 0 8px}
+.screen-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 18px 8px;position:relative}
+.screen-body::-webkit-scrollbar{width:9px}
+.screen-body::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;border:2px solid transparent;background-clip:content-box}
+.a-hero,.a-tools{flex:none}
+
+/* 改造后：目录容器吃掉屏幕剩余高度，贴到页面底部 / 迷你播放器上沿 */
+.stage[data-mode="after"] .screen-body{display:flex;flex-direction:column}
+.stage[data-mode="after"] .track-panel{flex:1 1 auto;min-height:150px;display:flex;flex-direction:column}
+.stage[data-mode="after"] .track-panel-body{flex:1 1 auto;min-height:0;height:auto}
+.stage[data-mode="after"] .track-scroller{position:absolute;inset:0;height:auto}
+.stage[data-mode="after"] .a-panel{flex:1 1 auto;min-height:150px}
+.stage[data-mode="before"] .screen-body{display:block}
+.stage[data-mode="before"] .a-panel{flex:none}
+
+/* 迷你播放器 */
+.mini-bar{flex:none;position:relative;height:62px;box-sizing:border-box;
+  background:color-mix(in srgb,var(--surface) 90%,transparent);
+  border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 14px}
+.mb-progress{position:absolute;top:0;left:0;height:2px;width:52%;background:var(--accent)}
+.mb-cover{width:38px;height:38px;flex:none;border-radius:9px;color:#fff;display:grid;place-items:center;
+  font-family:var(--serif);font-size:14px;background:linear-gradient(145deg,#8c5a3c,#c98b5e)}
+.mb-text{flex:1;min-width:0}
+.mb-t1{font-size:12px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb-t2{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb-btn{width:30px;height:30px;flex:none;border-radius:50%;background:var(--accent);color:#fff;
+  display:grid;place-items:center;font-size:11px}
+.stage[data-mini="off"] .mini-bar{display:none}
+
+/* 改造前：用一个贯穿整页的滚动条示意 */
+.stage[data-mode="before"] .screen-body::after{
+  content:"整页滚动条";position:absolute;right:2px;top:8px;bottom:8px;width:9px;
+  background:linear-gradient(var(--muted),var(--line));border-radius:6px;
+  writing-mode:vertical-rl;font-size:8px;color:transparent;letter-spacing:2px;text-align:center;
+  pointer-events:none;z-index:5}
+
+/* ---------- 书籍资料区 ---------- */
+.topbar-mini{display:flex;align-items:center;gap:9px;margin-bottom:14px;font-family:var(--serif);font-size:17px}
+.logo{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:15px}
+.back-btn{font-size:12px;color:var(--muted);border:0;background:none;padding:0 0 12px;cursor:pointer}
+.book-hero{display:flex;gap:16px;align-items:flex-start;margin-bottom:12px}
+.cover{width:88px;height:88px;flex:none;border-radius:14px;background:
+  linear-gradient(145deg,#8c5a3c,#c98b5e 55%,#e4bb94);box-shadow:var(--shadow-sm);
+  display:grid;place-items:center;color:#fff;font-family:var(--serif);font-size:26px;letter-spacing:.1em}
+.hero-info{min-width:0;flex:1;padding-top:2px}
+.hero-info h2{font-family:var(--serif);font-size:19px;margin:0 0 6px;line-height:1.3}
+.hero-info .meta{font-size:11.5px;color:var(--muted);margin:0 0 10px}
+.pbar{height:5px;border-radius:3px;background:var(--line-soft);overflow:hidden;max-width:280px;margin-bottom:12px}
+.pbar i{display:block;height:100%;width:52%;background:var(--accent);border-radius:3px}
+.hero-btns{display:flex;gap:7px;flex-wrap:wrap}
+.hero-btns span{font-size:11px;padding:6px 11px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--text-2)}
+.hero-btns span.main{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+
+.a-hero{display:flex;gap:14px;padding:16px 18px 8px}
+.a-hero .cover{width:76px;height:76px;border-radius:12px;font-size:22px}
+.a-hero .h2{font-size:16px;font-weight:650;margin:0 0 6px}
+.a-hero .m{font-size:11px;color:var(--muted);line-height:1.6;margin:0}
+.a-hero .pbar{margin-top:10px;max-width:180px}
+.a-tools{display:flex;gap:2px;padding:0 8px 6px;white-space:nowrap;overflow:hidden}
+.a-tools span{font-size:11px;color:var(--accent);padding:6px 8px}
+
+/* ---------- 改造后：网页端独立容器 ---------- */
+.track-panel{border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  box-shadow:var(--shadow-sm);overflow:hidden;margin-top:6px}
+.track-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:11px 14px 10px;border-bottom:1px solid var(--line-soft);background:var(--surface)}
+.tt-title{font-family:var(--serif);font-size:15px}
+.tt-count{font-size:11px;color:var(--muted)}
+.tt-gap{flex:1;min-width:4px}
+.tt-btn{font-size:10.5px;padding:5px 9px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--text-2)}
+.track-panel-body{position:relative;height:216px}
+.track-scroller{height:100%;overflow-y:auto;overscroll-behavior:contain;padding:6px 38px 10px 8px}
+.track-scroller::-webkit-scrollbar{width:7px}
+.track-scroller::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;border:2px solid transparent;background-clip:content-box}
+.track-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.track-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;
+  border:1px solid transparent;cursor:pointer;font-size:12.5px;transition:.14s}
+.track-item:hover{background:var(--surface-2);border-color:var(--line-soft)}
+.t-idx{width:26px;flex:none;text-align:right;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.t-body{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.t-time{font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+.t-state{width:14px;flex:none;text-align:center;color:var(--accent);font-size:11px}
+.track-item.done .t-body{color:var(--muted)}
+.track-item.resume-here{background:var(--accent-soft);border-color:var(--accent-line)}
+.track-item.resume-here .t-body{color:var(--text);font-weight:650}
+.track-item.resume-here .t-idx{color:var(--accent)}
+
+/* 章节定位条 */
+.track-scrollbar,.a-bar{position:absolute;top:7px;right:4px;bottom:7px;width:28px;z-index:3;
+  touch-action:none;user-select:none;cursor:pointer}
+.tsb-rail,.a-rail{position:absolute;left:12px;top:0;bottom:0;width:3px;border-radius:3px;background:var(--line)}
+.tsb-thumb,.a-thumb{position:absolute;left:0;top:0;width:27px;height:34px;border-radius:13px;
+  background:var(--accent);color:#fff;display:grid;place-items:center;font-size:10.5px;font-weight:650;
+  font-variant-numeric:tabular-nums;box-shadow:var(--shadow-sm);will-change:transform}
+.a-thumb{background:#7b5c46}
+.track-scrollbar.active .tsb-thumb,.a-bar.active .a-thumb{height:40px}
+
+/* ---------- 改造后：安卓端独立容器 ---------- */
+.a-panel{margin:6px 10px 0;border:1px solid #ded5c8;border-radius:18px;background:var(--surface);
+  box-shadow:var(--shadow-sm);overflow:hidden;position:relative;height:236px;display:flex;flex-direction:column}
+.a-head{display:flex;align-items:center;gap:7px;padding:9px 8px 6px 14px;border-bottom:1px solid var(--line-soft);flex:none}
+.a-head .t{font-size:14px;font-weight:650}
+.a-head .c{font-size:10.5px;color:var(--muted)}
+.a-head .g{flex:1}
+.a-head .b{font-size:10.5px;color:var(--accent);padding:4px 6px}
+.a-panel-inner{position:relative;flex:1;min-height:0}
+.a-scroll{height:100%;overflow-y:auto;overscroll-behavior:contain;padding:5px 34px 8px 4px}
+.a-scroll::-webkit-scrollbar{width:6px}
+.a-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+.a-row{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px;font-size:12px;cursor:pointer}
+.a-row:hover{background:var(--surface-2)}
+.a-row .n{width:24px;flex:none;text-align:right;font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.a-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.a-row .du{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.a-row.done .nm{color:var(--muted)}
+.a-row.current{background:#f1e3d7}
+.a-row.current .nm{color:#7b4a2c;font-weight:650}
+.a-row.current .n{color:#b4643c}
+
+/* ---------- 改造前：目录跟整页一起滚 ---------- */
+.stage[data-mode="before"] .track-panel,
+.stage[data-mode="before"] .a-panel{border:0;border-radius:0;background:transparent;box-shadow:none;
+  overflow:visible;height:auto;display:block;margin-top:0}
+.stage[data-mode="before"] .track-tools{border-bottom:0;background:transparent;padding-left:2px}
+.stage[data-mode="before"] .track-panel-body{height:auto}
+.stage[data-mode="before"] .track-scroller{height:auto;overflow:visible;padding-right:12px}
+.stage[data-mode="before"] .a-head{border-bottom:0;background:transparent;padding-left:2px}
+.stage[data-mode="before"] .a-panel-inner{min-height:auto}
+.stage[data-mode="before"] .a-scroll{height:auto;overflow:visible;padding-right:12px}
+.stage[data-mode="before"] .track-scrollbar,
+.stage[data-mode="before"] .a-bar{display:none}
+.stage[data-mode="before"] .a-body .a-tools{margin-bottom:4px}
+
+/* 说明卡 */
+.doc-foot{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.fcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)}
+.fcard h3{font-size:13.5px;margin:0 0 8px;font-family:var(--serif)}
+.fcard p,.fcard li{font-size:12px;color:var(--text-2);line-height:1.75;margin:0}
+.fcard ul{padding-left:17px;margin:0}
+.fcard code{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;padding:1px 5px;font-size:11px}
+.foot-note{margin-top:18px;font-size:11.5px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="doc-head">
+    <span class="tag">本地效果预览 · 尚未上传源码</span>
+    <h1>选集目录贴底 + 自动适配迷你播放器</h1>
+    <p class="sub">目录容器吃掉剩余高度一直延伸到页面底部 · 打开书籍定位到继续收听 · 网页端与安卓端同步改造 · 基于 v1.6.12</p>
+    <div class="controls">
+      <button class="primary" id="replayBtn">重新演示「打开书籍」</button>
+      <button id="modeBtn">切换：查看改造前</button>
+      <button id="miniBtn">迷你播放器：显示中</button>
+      <span class="hint">可以滚动章节列表、拖动右侧章号条；切一下迷你播放器看容器自动伸缩</span>
+    </div>
+    <div class="mode-note" id="modeNote"></div>
+  </header>
+
+  <div class="stage" id="stage" data-mode="after" data-mini="on">
+
+    <!-- ============ 网页端 ============ -->
+    <section class="device-col">
+      <div class="device-label"><span class="dot web"></span>网页端（电脑 / 手机浏览器）</div>
+      <div class="window">
+        <div class="win-bar"><span class="dots"><i></i><i></i><i></i></span><span class="addr">192.168.2.1:8686</span></div>
+        <div class="screen web-screen">
+          <div class="screen-body" id="webBody">
+            <div class="topbar-mini"><span class="logo">书</span>听书</div>
+            <div class="back-btn">← 返回书架</div>
+            <div class="book-hero">
+              <div class="cover">山海</div>
+              <div class="hero-info">
+                <h2>山海旧闻录</h2>
+                <p class="meta">共 260 章 · 已读 136 章 · 剩余 42.6 小时</p>
+                <div class="pbar"><i></i></div>
+                <div class="hero-btns">
+                  <span class="main">继续收听 · 第 137 章</span><span>从头开始</span><span>暂停记录</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="track-panel">
+              <div class="track-tools">
+                <span class="tt-title">目录</span><span class="tt-count">260 章 · 已读 136</span><span class="tt-gap"></span>
+                <span class="tt-btn">全本已读</span><span class="tt-btn">全本未读</span><span class="tt-btn">多选</span>
+              </div>
+              <div class="track-panel-body">
+                <div class="track-scroller" id="webScroller"><ol class="track-list" id="webList"></ol></div>
+                <div class="track-scrollbar" id="webBar">
+                  <div class="tsb-rail"></div><div class="tsb-thumb" id="webThumb"><span id="webLabel">1</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mini-bar">
+            <div class="mb-progress"></div>
+            <div class="mb-cover">山海</div>
+            <div class="mb-text"><div class="mb-t1">山海旧闻录</div><div class="mb-t2">第 137 章 · 旧书铺子 · 继续收听</div></div>
+            <div class="mb-btn">▶</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 安卓端 ============ -->
+    <section class="device-col">
+      <div class="device-label"><span class="dot and"></span>安卓端（原生 App · Compose）</div>
+      <div class="phone">
+        <div class="phone-bar"><span>9:41</span><span>▮▮▮ &nbsp; 82%</span></div>
+        <div class="app-bar"><span>←</span><span>山海旧闻录</span><span class="more">⋮</span></div>
+        <div class="screen a-body" id="andBody">
+          <div class="a-hero">
+            <div class="cover">山海</div>
+            <div>
+              <p class="h2">山海旧闻录</p>
+              <p class="m">共 260 章 · 已读 136 章<br>剩余 42.6 小时</p>
+              <div class="pbar"><i></i></div>
+            </div>
+          </div>
+          <div class="a-tools"><span>暂停记录</span><span>全本已读</span><span>全本未读</span><span>编辑资料</span></div>
+          <div class="a-panel">
+            <div class="a-head"><span class="t">目录</span><span class="c">260 章</span><span class="g"></span>
+              <span class="b">✓ 多选</span><span class="b">↕ 倒序</span></div>
+            <div class="a-panel-inner">
+              <div class="a-scroll" id="andScroller"><div id="andList"></div></div>
+              <div class="a-bar" id="andBar">
+                <div class="a-rail"></div><div class="a-thumb" id="andThumb"><span id="andLabel">1</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mini-bar">
+          <div class="mb-progress"></div>
+          <div class="mb-cover">山海</div>
+          <div class="mb-text"><div class="mb-t1">山海旧闻录</div><div class="mb-t2">第 137 章 · 旧书铺子</div></div>
+          <div class="mb-btn">▶</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="doc-foot">
+    <div class="fcard">
+      <h3>1 · 目录容器贴到页面底部</h3>
+      <ul>
+        <li>网页端 <code>body.book-open</code> 让 <code>#trackPanel</code> 用 flex 吃掉 <code>#pageScroll</code> 剩余高度，不再写死高度</li>
+        <li>安卓端 <code>ChapterPanel</code> 改用 <code>weight(1f)</code> 占满剩余空间，头部资料单独可滚动</li>
+        <li>列表只在卡片内部滚动，上方书籍资料保持不动，章号定位条只覆盖目录区</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <h3>2 · 迷你播放器自动适配</h3>
+      <ul>
+        <li>网页端有播放器时 <code>#pageScroll</code> 已是 <code>calc(100% - --mini-h)</code>，容器自动缩短贴住播放器上沿</li>
+        <li>安卓端外层 <code>Scaffold</code> 的 <code>bottomBar</code> 通过 padding 顶起内容，不需要写死数值</li>
+        <li><code>ResizeObserver</code> 在尺寸变化后重算章号条，滑块不会错位</li>
+      </ul>
+    </div>
+    <div class="fcard">
+      <h3>3 · 打开书籍定位到继续收听</h3>
+      <ul>
+        <li>网页端 <code>locateResumeTrack()</code> 在 <code>goBook()</code> 时把目标章滚到视口中间并短暂高亮</li>
+        <li>安卓端 <code>LaunchedEffect</code> 用 <code>scrollToItem()</code> 定位，切换正/倒序会重新定位</li>
+        <li>从没听过的书不定位，停在第 1 章；刷新渲染不抢走用户手动滚动的位置</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="foot-note">本页为 1:1 还原的交互效果预览。真实源码已本地修改，按你的要求暂不提交、不推送、不发布。</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  'use strict';
+  var TOTAL = 260, RESUME = 136;   // 0-based：继续收听第 137 章
+  var words = ['风起旧巷','夜行山路','灯下故人','雨落长街','远山有信','河灯初上','纸鸢无归','霜降前夜','旧书铺子','归途漫漫','青石桥边','无声之约','雪落柴门','回声渐远','松间明月','渡口黄昏'];
+
+  function chapterName(i){
+    return '第 ' + String(i+1).padStart(3,'0') + '章  ' + words[i % words.length];
+  }
+  function duration(i){
+    return String(12 + (i*7)%40) + ':' + String((i*13)%60).padStart(2,'0');
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  var toastEl = $('toast'), toastTimer;
+  function toast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, 2200);
+  }
+
+  /* 生成两份章节列表 */
+  var webList = $('webList'), andList = $('andList');
+  var wFrag = document.createDocumentFragment(), aFrag = document.createDocumentFragment();
+  for (var i = 0; i < TOTAL; i++){
+    var li = document.createElement('li');
+    li.className = 'track-item' + (i < RESUME ? ' done' : '') + (i === RESUME ? ' resume-here' : '');
+    li.dataset.i = i;
+    li.innerHTML = '<span class="t-idx">' + (i === RESUME ? '♪' : i+1) + '</span>'
+      + '<span class="t-body">' + chapterName(i) + '</span>'
+      + '<span class="t-time">' + duration(i) + '</span>'
+      + '<span class="t-state">' + (i === RESUME ? '▮' : (i < RESUME ? '✓' : '')) + '</span>';
+    wFrag.appendChild(li);
+
+    var row = document.createElement('div');
+    row.className = 'a-row' + (i < RESUME ? ' done' : '') + (i === RESUME ? ' current' : '');
+    row.dataset.i = i;
+    row.innerHTML = '<span class="n">' + (i === RESUME ? '♪' : i+1) + '</span>'
+      + '<span class="nm">' + chapterName(i) + '</span>'
+      + '<span class="du">' + duration(i) + '</span>';
+    aFrag.appendChild(row);
+  }
+  webList.appendChild(wFrag);
+  andList.appendChild(aFrag);
+
+  /* 每个设备一套：滚动容器 / 定位条 / 列表 */
+  var devices = [
+    { key:'web', sc:$('webScroller'), bar:$('webBar'), thumb:$('webThumb'), label:$('webLabel'), list:webList, cls:'resume-here' },
+    { key:'and', sc:$('andScroller'), bar:$('andBar'), thumb:$('andThumb'), label:$('andLabel'), list:andList, cls:'current' }
+  ];
+
+  function mode(){ return $('stage').dataset.mode; }
+
+  function updateBar(d){
+    if (mode() !== 'after') return;
+    var sc = d.sc, bar = d.bar;
+    var maxScroll = Math.max(1, sc.scrollHeight - sc.clientHeight);
+    var frac = Math.min(1, Math.max(0, sc.scrollTop / maxScroll));
+    var railH = bar.clientHeight || 1;
+    var thumbH = d.thumb.offsetHeight || 34;
+    d.thumb.style.transform = 'translateY(' + Math.round((railH - thumbH) * frac) + 'px)';
+
+    var items = d.list.children, scRect = sc.getBoundingClientRect(), first = 0;
+    for (var k = 0; k < items.length; k++){
+      if (items[k].getBoundingClientRect().bottom > scRect.top + 4){ first = k; break; }
+    }
+    d.label.textContent = String(first + 1);
+  }
+
+  function seek(d, clientY){
+    if (mode() !== 'after') return;
+    var rect = d.bar.getBoundingClientRect();
+    var frac = Math.min(1, Math.max(0, (clientY - rect.top) / (rect.height || 1)));
+    var n = d.list.children.length;
+    var li = d.list.children[Math.round(frac * (n - 1))];
+    if (!li) return;
+    var scRect = d.sc.getBoundingClientRect();
+    d.sc.scrollTop = Math.max(0, d.sc.scrollTop + (li.getBoundingClientRect().top - scRect.top) - 8);
+    updateBar(d);
+  }
+
+  /* 打开书籍：定位到「继续收听」章节 */
+  function locate(d, smooth){
+    var sc = d.sc, li = d.list.children[RESUME];
+    if (!li) return;
+    if (mode() !== 'after'){
+      var body = d.key === 'web' ? $('webBody') : $('andBody');
+      body.scrollTop = 0;
+      return;
+    }
+    var liRect = li.getBoundingClientRect(), scRect = sc.getBoundingClientRect();
+    var top = Math.max(0, sc.scrollTop + (liRect.top - scRect.top) - sc.clientHeight/2 + liRect.height/2);
+    if (smooth && typeof sc.scrollTo === 'function') sc.scrollTo({ top: top, behavior: 'smooth' });
+    else sc.scrollTop = top;
+    li.classList.add(d.cls);
+    updateBar(d);
+  }
+
+  devices.forEach(function(d){
+    d.sc.addEventListener('scroll', function(){ updateBar(d); }, { passive:true });
+    var dragging = false;
+    d.bar.addEventListener('pointerdown', function(e){
+      if (mode() !== 'after') return;
+      dragging = true;
+      d.bar.classList.add('active');
+      try { d.bar.setPointerCapture(e.pointerId); } catch(_){}
+      seek(d, e.clientY);
+      e.preventDefault();
+    });
+    d.bar.addEventListener('pointermove', function(e){
+      if (!dragging) return;
+      seek(d, e.clientY);
+      e.preventDefault();
+    });
+    var end = function(){ dragging = false; d.bar.classList.remove('active'); };
+    d.bar.addEventListener('pointerup', end);
+    d.bar.addEventListener('pointercancel', end);
+    d.bar.addEventListener('lostpointercapture', end);
+    /* 点击章节切换高亮，模拟选集 */
+    d.list.addEventListener('click', function(e){
+      var item = e.target.closest('[data-i]');
+      if (!item) return;
+      Array.prototype.forEach.call(d.list.children, function(x){ x.classList.remove(d.cls); });
+      item.classList.add(d.cls);
+    });
+  });
+
+  window.addEventListener('resize', function(){ devices.forEach(updateBar); });
+
+  $('replayBtn').addEventListener('click', function(){
+    if (mode() !== 'after') setMode('after');
+    devices.forEach(function(d){ d.sc.scrollTop = 0; });
+    setTimeout(function(){
+      devices.forEach(function(d){ locate(d, true); });
+      toast('已打开书籍 · 自动定位到继续收听 第 137 章');
+    }, 60);
+  });
+
+  var note = $('modeNote'), modeBtn = $('modeBtn');
+  function setMode(m){
+    $('stage').dataset.mode = m;
+    if (m === 'before'){
+      note.textContent = '改造前：章节列表与书籍资料共用整页滚动条，目录是固定高度、下方留一大块空白；打开书籍后停在第 1 章，要自己翻到上次听到的位置。';
+      note.classList.add('show');
+      modeBtn.textContent = '切换：查看改造后';
+      $('webBody').scrollTop = 0;
+      $('andBody').scrollTop = 0;
+    } else {
+      note.textContent = '改造后：目录卡片吃掉剩余高度，一直延伸到页面底部（或迷你播放器上沿）；只有卡片内部滚动，打开书籍自动停在「继续收听」章节。';
+      note.classList.add('show');
+      modeBtn.textContent = '切换：查看改造前';
+      devices.forEach(function(d){ d.sc.scrollTop = 0; });
+      setTimeout(function(){ devices.forEach(function(d){ locate(d, false); }); }, 30);
+    }
+  }
+  modeBtn.addEventListener('click', function(){
+    setMode(mode() === 'after' ? 'before' : 'after');
+  });
+
+  /* 迷你播放器显隐：容器高度变了，章号条要跟着重算 */
+  var miniBtn = $('miniBtn');
+  miniBtn.addEventListener('click', function(){
+    var on = $('stage').dataset.mini !== 'on';
+    $('stage').dataset.mini = on ? 'on' : 'off';
+    miniBtn.textContent = on ? '迷你播放器：显示中' : '迷你播放器：已隐藏';
+    setTimeout(function(){
+      devices.forEach(function(d){ if (mode() === 'after') updateBar(d); });
+    }, 60);
+    toast(on ? '迷你播放器出现 · 目录容器自动缩短，贴住播放器上沿'
+             : '迷你播放器隐藏 · 目录容器自动延伸到页面底部');
+  });
+
+  /* 首次进入即演示「打开书籍」 */
+  setMode('after');
+  setTimeout(function(){
+    devices.forEach(function(d){ locate(d, true); });
+    toast('打开书籍 · 自动定位到继续收听 第 137 章');
+  }, 420);
+})();
+</script>
+</body>
+</html>

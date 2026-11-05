@@ -112,6 +112,11 @@
     editBookBtn: $('#editBookBtn'),
     trackTools: $('#trackTools'),
     trackList: $('#trackList'),
+    trackPanel: $('#trackPanel'),
+    trackScroller: $('#trackScroller'),
+    trackScrollBar: $('#trackScrollBar'),
+    tsbThumb: $('#tsbThumb'),
+    tsbLabel: $('#tsbLabel'),
     // 编辑弹窗
     editSheet: $('#editSheet'),
     editCover: $('#editCover'),
@@ -1065,8 +1070,12 @@
     state.bookView = book;
     el.libraryView.hidden = true;
     el.bookView.hidden = false;
+    // 书籍页让目录容器吃掉剩余高度，直接贴到页面底部
+    document.body.classList.add('book-open');
     el.pageScroll.scrollTop = 0;
     renderBookView(book);
+    // 进入书籍页时，把独立目录容器滚到「继续收听」的那一章
+    locateResumeTrack(book);
     scanDurations(book);
     loadServerDurations(book);
   }
@@ -1076,6 +1085,7 @@
     resetTrackSel();
     el.bookView.hidden = true;
     el.libraryView.hidden = false;
+    document.body.classList.remove('book-open');
     el.pageScroll.scrollTop = 0;
     renderLibrary();
   }
@@ -1339,6 +1349,126 @@
 
     el.trackList.replaceChildren();
     el.trackList.appendChild(freq);
+    updateTrackScrollBar(book);
+  }
+
+  /* ================= 选集目录独立容器 / 章节定位 ================= */
+
+  /** 这本书「继续收听」的章节下标；从没听过则返回 -1 */
+  function resumeIndexOf(book) {
+    if (!book || !book.tracks || !book.tracks.length) return -1;
+    const last = book.tracks.length - 1;
+    if (state.current && state.current.book.id === book.id) {
+      return Math.min(state.current.index || 0, last);
+    }
+    const p = progressOf(book.id);
+    if (!p) return -1;
+    if ((p.time || 0) <= 1 && !(p.done || []).length) return -1;
+    return Math.min(p.index || 0, last);
+  }
+
+  /**
+   * 打开书籍时把目录滚动到继续收听的章节，并短暂高亮。
+   * 只在进入书籍页时调用；之后的刷新渲染不会抢走用户手动滚动的位置。
+   */
+  function locateResumeTrack(book, smooth = false) {
+    const sc = el.trackScroller;
+    if (!sc) return;
+    const i = resumeIndexOf(book);
+    if (i < 0) { sc.scrollTop = 0; updateTrackScrollBar(book); return; }
+    const li = el.trackList.children[i];
+    if (!li) return;
+    const liRect = li.getBoundingClientRect();
+    const scRect = sc.getBoundingClientRect();
+    const top = Math.max(0, sc.scrollTop + (liRect.top - scRect.top)
+      - sc.clientHeight / 2 + liRect.height / 2);
+    if (smooth && typeof sc.scrollTo === 'function') sc.scrollTo({ top, behavior: 'smooth' });
+    else sc.scrollTop = top;
+    li.classList.add('resume-here');
+    clearTimeout(locateResumeTrack._timer);
+    locateResumeTrack._timer = setTimeout(() => li.classList.remove('resume-here'), 3200);
+    updateTrackScrollBar(book);
+  }
+
+  /** 同步自定义定位条的滑块位置与当前可见章号 */
+  function updateTrackScrollBar(book) {
+    const bar = el.trackScrollBar;
+    const sc = el.trackScroller;
+    if (!bar || !sc || !el.tsbThumb || !el.tsbLabel) return;
+    const items = el.trackList.children;
+    const n = items.length;
+    if (n < 4) { bar.hidden = true; return; }
+    bar.hidden = false;
+
+    const maxScroll = Math.max(1, sc.scrollHeight - sc.clientHeight);
+    const frac = Math.min(1, Math.max(0, sc.scrollTop / maxScroll));
+    const railH = bar.clientHeight || 1;
+    const thumbH = el.tsbThumb.offsetHeight || 38;
+    el.tsbThumb.style.transform = `translateY(${Math.round((railH - thumbH) * frac)}px)`;
+
+    const scRect = sc.getBoundingClientRect();
+    let first = 0;
+    for (let k = 0; k < n; k++) {
+      if (items[k].getBoundingClientRect().bottom > scRect.top + 4) { first = k; break; }
+    }
+    el.tsbLabel.textContent = String(first + 1);
+  }
+
+  /** 点击 / 拖动定位条：按比例跳到对应章节 */
+  function seekTrackScrollBar(clientY) {
+    const bar = el.trackScrollBar;
+    const sc = el.trackScroller;
+    if (!bar || !sc || bar.hidden) return;
+    const rect = bar.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientY - rect.top) / (rect.height || 1)));
+    const n = el.trackList.children.length;
+    if (!n) return;
+    const li = el.trackList.children[Math.round(frac * (n - 1))];
+    if (!li) return;
+    const scRect = sc.getBoundingClientRect();
+    sc.scrollTop = Math.max(0, sc.scrollTop + (li.getBoundingClientRect().top - scRect.top) - 8);
+    if (state.bookView) updateTrackScrollBar(state.bookView);
+  }
+
+  /** 定位条事件：滚动同步 + 指针拖动（鼠标 / 触屏走同一套 pointer 事件） */
+  function bindTrackScrollBar() {
+    const bar = el.trackScrollBar;
+    const sc = el.trackScroller;
+    if (!bar || !sc) return;
+    sc.addEventListener('scroll', () => {
+      if (state.bookView) updateTrackScrollBar(state.bookView);
+    }, { passive: true });
+
+    let dragging = false;
+    bar.addEventListener('pointerdown', (e) => {
+      if (!state.bookView || bar.hidden) return;
+      dragging = true;
+      bar.classList.add('active');
+      try { bar.setPointerCapture(e.pointerId); } catch (_) {}
+      seekTrackScrollBar(e.clientY);
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      seekTrackScrollBar(e.clientY);
+      e.preventDefault();
+    });
+    const end = () => { dragging = false; bar.classList.remove('active'); };
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+    bar.addEventListener('lostpointercapture', end);
+    window.addEventListener('resize', () => {
+      if (state.bookView) updateTrackScrollBar(state.bookView);
+    });
+    // 迷你播放器显隐、手机横竖屏、地址栏收起都会改变容器高度，
+    // 用 ResizeObserver 兜住所有「不是 window resize」的尺寸变化
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        if (state.bookView) updateTrackScrollBar(state.bookView);
+      });
+      ro.observe(sc);
+      if (el.trackPanel) ro.observe(el.trackPanel);
+    }
   }
 
   /* ================= 编辑书籍（封面 / 简介） ================= */
@@ -2030,6 +2160,9 @@
   function setMiniVisible(v) {
     el.mini.hidden = !v;
     document.body.classList.toggle('mini-hidden', !v);
+    // 迷你播放器出现/消失会改变 #pageScroll 高度，目录容器跟着伸缩，
+    // 等布局稳定后重算章号条的滑块位置
+    if (state.bookView) requestAnimationFrame(() => updateTrackScrollBar(state.bookView));
   }
 
   /**
@@ -4858,6 +4991,8 @@
 
   /* 章节列表与播放器控制 */
   function bindPlaybackEvents() {
+    bindTrackScrollBar();
+
     el.trackList.addEventListener('click', (e) => {
       const li = e.target.closest('.track-item');
       const book = state.bookView;

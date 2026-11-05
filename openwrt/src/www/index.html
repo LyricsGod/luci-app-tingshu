@@ -134,8 +134,21 @@
       </div>
     </div>
 
-    <div id="trackTools" class="track-tools"></div>
-    <ol id="trackList" class="track-list"></ol>
+    <!-- 选集目录与章节滚动条独立成一个容器：
+         上方书籍资料保持不动，目录在自己的滚动区里滚动，
+         右侧章节定位条只覆盖这个容器，不再贯穿整页。 -->
+    <div id="trackPanel" class="track-panel">
+      <div id="trackTools" class="track-tools"></div>
+      <div class="track-panel-body">
+        <div id="trackScroller" class="track-scroller">
+          <ol id="trackList" class="track-list"></ol>
+        </div>
+        <div id="trackScrollBar" class="track-scrollbar" hidden aria-hidden="true">
+          <div class="tsb-rail"></div>
+          <div id="tsbThumb" class="tsb-thumb"><span id="tsbLabel">1</span></div>
+        </div>
+      </div>
+    </div>
   </section>
 
 </main>
