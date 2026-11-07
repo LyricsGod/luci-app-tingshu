@@ -18,9 +18,12 @@ prepare_www() {
 	chmod 755 "$WWW_DIR"
 	for f in "$SRC_WWW"/*; do
 		[ -e "$f" ] || continue
+		name="${f##*/}"
 		cp -f "$f" "$WWW_DIR/$name" 2>/dev/null
 		chmod 644 "$WWW_DIR/$name" 2>/dev/null
 	done
+	# 兜底：目录必须可遍历，否则 uhttpd 对静态文件一律 403
+	chmod 755 "$WWW_DIR"
 	# 每次启动给静态资源加版本号，避免浏览器缓存旧版（uhttpd 无 no-cache 选项）
 	ver=$(date +%s)
 	# 注入版本号到静态资源引用 + 全局变量（点击首页品牌可看）
