@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.7.3';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.7.4';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -961,15 +961,6 @@
         meta.textContent = `第 ${st.index + 1} / ${book.tracks.length} 章`;
       } else {
         meta.textContent = `${book.tracks.length} 章`;
-      }
-      if (book.desc) {
-        const dot = document.createElement('span');
-        dot.className = 'card-dot';
-        dot.textContent = '·';
-        const has = document.createElement('span');
-        has.className = 'card-hasdesc';
-        has.textContent = '简介';
-        meta.append(dot, has);
       }
 
       const bar = document.createElement('div');

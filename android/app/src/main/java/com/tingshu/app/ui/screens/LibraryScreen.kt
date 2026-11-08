@@ -622,7 +622,6 @@ private fun BookCard(
                 } else {
                     append("共 ${book.chapterCount} 章")
                 }
-                if (book.description.isNotBlank()) append(" · 简介")
             },
             style = MaterialTheme.typography.labelSmall,
             color = colors.onSurfaceVariant,
