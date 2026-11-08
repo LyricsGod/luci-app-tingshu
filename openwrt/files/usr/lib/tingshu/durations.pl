@@ -37,6 +37,20 @@ sub json_escape {
 }
 
 # ---- m4a / mp4 ----
+# 有些 M4A 前面挂着 ID3v2 标签（一般是改名成 .mp3 时留下的封面），
+# 直接从头读 box 会读到伪 size，所以先算出标签总长度当起点。
+sub id3v2_len {
+    my ($fh) = @_;
+    seek($fh, 0, 0) or return 0;
+    my $h = '';
+    return 0 unless read($fh, $h, 10) == 10;
+    return 0 unless substr($h, 0, 3) eq 'ID3';
+    my @b = unpack('C4', substr($h, 6, 4));
+    my $len = 10 + (($b[0] & 0x7f) << 21 | ($b[1] & 0x7f) << 14 | ($b[2] & 0x7f) << 7 | ($b[3] & 0x7f));
+    $len += 10 if (unpack('C', substr($h, 5, 1)) & 0x10);
+    return $len;
+}
+
 sub parse_mvhd {
     my ($fh, $start, $len) = @_;
     my $pos = $start;
@@ -69,8 +83,9 @@ sub parse_mvhd {
 }
 
 sub m4a_duration {
-    my ($fh, $size) = @_;
-    my $pos = 0;
+    my ($fh, $size, $start) = @_;
+    $start = 0 unless defined $start;
+    my $pos = $start;
     while ($pos + 8 <= $size) {
         seek($fh, $pos, 0) or return undef;
         my $buf = '';
@@ -190,10 +205,15 @@ sub file_duration {
     open(my $fh, '<:raw', $path) or return undef;
     my $dur;
     my $ext = $path;
+    # 扩展名不可信：有人把 M4A 直接改名成 .mp3（前面还挂着 ID3 封面标签），
+    # 只看后缀会走错分支、永远算不出时长。按后缀先试，失败再按内容试另一种。
+    my $skip = id3v2_len($fh);
     if ($ext =~ /\.(?:m4a|m4b|mp4|aac)$/i) {
-        $dur = m4a_duration($fh, $size);
+        $dur = m4a_duration($fh, $size, $skip);
+        $dur = mp3_duration($fh, $size) unless defined $dur;
     } elsif ($ext =~ /\.(?:mp3)$/i) {
         $dur = mp3_duration($fh, $size);
+        $dur = m4a_duration($fh, $size, $skip) unless defined $dur;
     }
     close($fh);
     return undef unless defined $dur && $dur > 0 && $dur < 100000;
