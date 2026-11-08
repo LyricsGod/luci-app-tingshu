@@ -63,7 +63,7 @@ uhttpd(:8686) ──► /tmp/tingshu/www        网页本体 + library.json（�
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-tingshu_1.7.4-1_all.ipk
+opkg install /tmp/luci-app-tingshu_1.7.5-1_all.ipk
 ```
 
 装完自动启用并启动服务，打开 LuCI 的 **服务 → 听书** 配置。依赖 `uhttpd` 和 `luci-base`，正常装了 LuCI 的固件都有。
@@ -239,8 +239,8 @@ android/                             安卓客户端（Kotlin + Compose + Media3
 
 ```sh
 git push origin main
-git tag -a v1.7.4 -m "听书 1.7.4"
-git push origin v1.7.4
+git tag -a v1.7.5 -m "听书 1.7.5"
+git push origin v1.7.5
 ```
 
 标签必须和 `APP_VERSION` 一致（`v` + 版本号），Release 页面：<https://github.com/LyricsGod/luci-app-tingshu/releases>

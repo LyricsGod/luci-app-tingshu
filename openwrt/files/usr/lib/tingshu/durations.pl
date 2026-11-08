@@ -234,23 +234,8 @@ unless (-d $dir) {
     exit 0;
 }
 
-my @files;
-if ($rel eq '__root__') {
-    opendir(my $dh, $dir) or do { print "{}"; exit 0; };
-    @files = map { "$dir/$_" } grep { m/$AUDIO/ && -f "$dir/$_" } readdir($dh);
-    closedir($dh);
-} else {
-    File::Find::find({
-        no_chdir => 1,
-        wanted => sub {
-            return unless -f $_ && m/$AUDIO/;
-            my $depth = ($_ =~ tr{/}{});
-            push @files, $_ if $depth < 12;
-        },
-    }, $dir);
-}
-
-# 缓存：目录没变就用缓存
+# 缓存判定必须放在遍历目录之前：书库常在 CIFS/SMB 上，
+# 遍历上千个文件就是上千次网络 stat，命中缓存时完全没必要付这个代价。
 my $cache = $opt{cache};
 if ($cache && -f $cache) {
     my $cm = (stat($cache))[9] // 0;
@@ -265,6 +250,22 @@ if ($cache && -f $cache) {
             if (defined $body && $body ne '') { exit 0; }
         }
     }
+}
+
+my @files;
+if ($rel eq '__root__') {
+    opendir(my $dh, $dir) or do { print "{}"; exit 0; };
+    @files = map { "$dir/$_" } grep { m/$AUDIO/ && -f "$dir/$_" } readdir($dh);
+    closedir($dh);
+} else {
+    File::Find::find({
+        no_chdir => 1,
+        wanted => sub {
+            return unless -f $_ && m/$AUDIO/;
+            my $depth = ($_ =~ tr{/}{});
+            push @files, $_ if $depth < 12;
+        },
+    }, $dir);
 }
 
 my @out;

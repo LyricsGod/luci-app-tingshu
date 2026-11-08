@@ -9,6 +9,10 @@
 
 WWW_DIR="${TINGSHU_WWW_DIR:-/tmp/tingshu/www}"
 BOOKS_DIR="${TINGSHU_BOOKS_DIR:-}"
+LIB_DIR="${TINGSHU_LIB_DIR:-/usr/lib/tingshu}"
+PERL="$(command -v perl 2>/dev/null)"
+DUR_CACHE="/etc/tingshu/durations"
+WARM_LOCK="/tmp/tingshu-warm.lock"
 
 if [ -z "$BOOKS_DIR" ]; then
 	if [ -f /lib/functions.sh ] && [ -f /etc/config/tingshu ]; then
@@ -22,6 +26,17 @@ fi
 
 OUT="$WWW_DIR/library.json"
 mkdir -p "$WWW_DIR" 2>/dev/null
+
+# 保证 media 指向当前书架目录：在 LuCI 改了「书架目录」却只点「重新扫描」、
+# 没点「保存并应用」（不会重启服务）时，软链还指着旧路径，就会出现
+# 索引是新的、封面和音频却全部 404 的情况。
+MEDIA_LINK="$WWW_DIR/media"
+if ! mount 2>/dev/null | grep -q " on $MEDIA_LINK "; then
+	if [ "$(readlink "$MEDIA_LINK" 2>/dev/null)" != "$BOOKS_DIR" ]; then
+		rm -f "$MEDIA_LINK" 2>/dev/null
+		ln -sfn "$BOOKS_DIR" "$MEDIA_LINK" 2>/dev/null
+	fi
+fi
 
 TMP="$(mktemp -d /tmp/tingshu-scan.XXXXXX)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
@@ -99,6 +114,35 @@ emit_book() {
 	return 0
 }
 
+# 扫描后顺带把章节时长算好并落盘（/etc 持久，重启不丢），之后打开书籍页
+# 直接命中缓存。书库常在 CIFS/SMB 上，读文件偶尔会卡死，所以：
+#   · 放到后台跑，绝不拖住扫描结果
+#   · 每本加 timeout，卡住就跳过
+#   · 用锁避免多次扫描时重复堆积
+warm_durations() {
+	[ -n "$PERL" ] || return 0
+	[ -f "$LIB_DIR/durations.pl" ] || return 0
+	[ -f "$WARM_LOCK" ] && return 0
+	: > "$WARM_LOCK" 2>/dev/null || return 0
+	(
+		mkdir -p "$DUR_CACHE" 2>/dev/null
+		for d in "$BOOKS_DIR"/*/; do
+			[ -d "$d" ] || continue
+			slash="${d%/}"
+			rel="${slash#"$BOOKS_DIR"/}"
+			[ -n "$rel" ] || continue
+			key="$(printf '%s' "$rel" | md5sum | cut -d' ' -f1)"
+			[ -n "$key" ] || continue
+			[ -s "$DUR_CACHE/$key.json" ] && continue
+			# 有的固件 busybox 没编 timeout，这里不依赖它：预热本来就在后台跑，
+			# 加上前面的锁，卡住也不会重复堆积。
+			"$PERL" "$LIB_DIR/durations.pl" --books "$BOOKS_DIR" \
+				--rel "$rel" --cache "$DUR_CACHE/$key.json" >/dev/null 2>&1
+		done
+		rm -f "$WARM_LOCK"
+	) >/dev/null 2>&1 &
+}
+
 if [ ! -d "$BOOKS_DIR" ]; then
 	error_msg="书架目录不存在：$BOOKS_DIR"
 else
@@ -140,6 +184,9 @@ books_inline="$(sed -e 's/$/,/' "$BOOKS_JSON" | tr -d '\n' | sed -e 's/,$//')"
 		&& printf ',"error":"%s"' "$(esc "$BOOKS_DIR 里没有找到音频文件（支持 mp3 / m4a / aac / ogg / flac / wav）")"
 	printf ',"books":[%s]}\n' "$books_inline"
 } > "$OUT"
+
+# 预热时长缓存：失败也不影响书库索引，所以放最后且忽略返回值
+warm_durations
 
 printf '{"books":%d,"tracks":%d,"root":"%s"}\n' "$book_count" "$track_count" "$(esc "$BOOKS_DIR")"
 exit 0
