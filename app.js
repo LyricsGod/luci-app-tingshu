@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.7.2';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.7.3';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -808,14 +808,21 @@
     const idx = p ? Math.min(p.index || 0, n - 1) : 0;
     const time = p ? p.time || 0 : 0;
 
-    let total = 0, listened = 0, known = n > 0;
+    let total = 0, listened = 0, knownCount = 0;
     for (let i = 0; i < n; i++) {
       const d = state.durations.get(durKey(book, i));
-      if (!d) { known = false; break; }
+      if (!d) continue;
+      knownCount++;
       total += d;
       if (done.has(i)) listened += d;
       else if (p && i === idx) listened += Math.min(time, d);
     }
+
+    // 个别章节解析不出时长（格式不符、损坏）时按平均值补齐，避免整本失去「全长 / 还剩」；
+    // 有数据的不足一半就认为不可信，退回按章节数估算。
+    const missing = n - knownCount;
+    const known = n > 0 && knownCount > 0 && knownCount * 2 >= n;
+    if (known && missing > 0) total += (total / knownCount) * missing;
 
     let frac;
     if (known && total > 0) frac = Math.min(1, listened / total);

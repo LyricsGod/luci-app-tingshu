@@ -119,10 +119,22 @@ fun BookScreen(
     val bookDurations by vm.bookDurations.collectAsStateWithLifecycle()
     LaunchedEffect(book.id) { vm.loadDurations(book) }
     val durationByPath = if (bookDurations.bookId == book.id) bookDurations.items else emptyMap()
-    val totalSeconds = remember(book.id, durationByPath) {
-        if (durationByPath.isEmpty()) 0.0 else book.tracks.sumOf { durationByPath[it.path] ?: 0.0 }
+    // 少数文件可能解析不出时长（格式不符、损坏）。这种情况用已有时长的平均值补齐，
+    // 否则整本书会因为缺一章而失去「剩余 X 小时」。
+    val knownDurations = remember(book.id, durationByPath) {
+        book.tracks.count { durationByPath.containsKey(it.path) }
     }
-    val hoursReady = totalSeconds > 0 && book.tracks.all { durationByPath.containsKey(it.path) }
+    val totalSeconds = remember(book.id, durationByPath, knownDurations) {
+        if (knownDurations == 0) {
+            0.0
+        } else {
+            val knownSum = book.tracks.sumOf { durationByPath[it.path] ?: 0.0 }
+            val missing = book.tracks.size - knownDurations
+            knownSum + knownSum / knownDurations * missing
+        }
+    }
+    // 至少一半章节有真实时长才展示；缺得太多时估算不可信，退回「已听 N/M 章」
+    val hoursReady = knownDurations > 0 && knownDurations * 2 >= book.tracks.size
 
     var showEdit by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
