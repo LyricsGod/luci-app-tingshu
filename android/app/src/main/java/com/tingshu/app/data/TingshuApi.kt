@@ -168,10 +168,23 @@ class TingshuApi(
         JSONObject(text).has("books")
     }
 
-    suspend fun fetchLibrary(base: String, cacheOnly: Boolean = false): RawLibrary? = withContext(Dispatchers.IO) {
-        val text = loadText(CacheStore.libraryKey(base), cacheOnly) {
-            request("${base}library.json?t=${System.currentTimeMillis()}")
-        } ?: return@withContext null
+    suspend fun fetchLibrary(base: String): RawLibrary = withContext(Dispatchers.IO) {
+        val key = CacheStore.libraryKey(base)
+        val text = try {
+            request("${base}library.json?t=${System.currentTimeMillis()}").also { cache?.write(key, it) }
+        } catch (t: Throwable) {
+            cache?.read(key) ?: throw t
+        }
+        parseLibrary(text)
+    }
+
+    /** 只读本地缓存的书库；没有缓存返回 null（界面先拿它渲染，再走网络刷新）。 */
+    suspend fun fetchLibraryCached(base: String): RawLibrary? = withContext(Dispatchers.IO) {
+        val text = cache?.read(CacheStore.libraryKey(base)) ?: return@withContext null
+        runCatching { parseLibrary(text) }.getOrNull()
+    }
+
+    private fun parseLibrary(text: String): RawLibrary {
         val json = JSONObject(text)
 
         val arr = json.optJSONArray("books") ?: JSONArray()
@@ -201,7 +214,7 @@ class TingshuApi(
             )
         }
 
-        RawLibrary(
+        return RawLibrary(
             root = json.optString("root"),
             error = json.optString("error").ifBlank { null },
             books = books,

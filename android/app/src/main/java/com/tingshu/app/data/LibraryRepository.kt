@@ -3,7 +3,6 @@ package com.tingshu.app.data
 import android.util.Log
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import java.io.IOException
 import java.text.Collator
 import java.util.Locale
 
@@ -25,7 +24,7 @@ class LibraryRepository(
         val metaJob = async { fetchMetaSafely(base) }
         val collectionsJob = async { fetchCollectionsSafely(base) }
 
-        val raw = libraryJob.await() ?: throw IOException("书库为空")
+        val raw = libraryJob.await()
         assemble(base, raw, metaJob.await(), collectionsJob.await(), "网络")
     }
 
@@ -34,7 +33,7 @@ class LibraryRepository(
      * 没有缓存返回 null（这时界面照常等网络）。
      */
     suspend fun loadCached(base: String): LibrarySnapshot? = coroutineScope {
-        val raw = api.fetchLibrary(base, cacheOnly = true) ?: return@coroutineScope null
+        val raw = api.fetchLibraryCached(base) ?: return@coroutineScope null
         val meta = api.fetchMeta(base, cacheOnly = true)
         val collections = api.fetchCollections(base, cacheOnly = true).takeIf { it.isNotEmpty() }
         assemble(base, raw, meta, collections, "缓存")
