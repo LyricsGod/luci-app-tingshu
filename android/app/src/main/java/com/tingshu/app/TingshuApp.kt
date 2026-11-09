@@ -3,6 +3,7 @@ package com.tingshu.app
 import android.app.Application
 import android.content.Context
 import com.tingshu.app.data.AppPrefs
+import com.tingshu.app.data.CacheStore
 import com.tingshu.app.data.CollectionsStore
 import com.tingshu.app.data.CoverStore
 import com.tingshu.app.data.LanScanner
@@ -28,7 +29,8 @@ class AppContainer(context: Context) {
     val progressStore = ProgressStore(context)
     val collectionsStore = CollectionsStore(context)
     val covers = CoverStore(context)
-    val api = TingshuApi { prefs.authToken }
+    val cache = CacheStore(context)
+    val api = TingshuApi({ prefs.authToken }, cache)
     val repository = LibraryRepository(api, covers)
     val scanner = LanScanner()
     val player = PlaybackController(context)

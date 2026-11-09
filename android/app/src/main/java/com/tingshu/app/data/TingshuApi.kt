@@ -24,7 +24,28 @@ import java.util.Locale
  *  - GET  cgi-ts/collections               合集
  *  - POST cgi-ts/manage?action=rescan      重扫书库
  */
-class TingshuApi(private val tokenProvider: () -> String? = { null }) {
+class TingshuApi(
+    private val tokenProvider: () -> String? = { null },
+    /** 传了就启用本地缓存：请求成功写盘、网络失败回退、cacheOnly 只读盘。 */
+    private val cache: CacheStore? = null,
+) {
+
+    /**
+     * 统一的取数入口：
+     *  - cacheOnly = true：只读本地缓存，没有就返回 null（用于「先渲染旧数据」）
+     *  - 正常请求：成功写缓存；失败且有缓存就用缓存兜底，至少不白屏
+     */
+    private suspend fun loadText(key: String, cacheOnly: Boolean, block: suspend () -> String): String? {
+        if (cacheOnly) return cache?.read(key)
+        return try {
+            block().also { cache?.write(key, it) }
+        } catch (t: Throwable) {
+            val cached = cache?.read(key)
+            if (cached == null) throw t
+            Log.w(TAG, "网络失败，改用缓存兜底: $key (${t.javaClass.simpleName})")
+            cached
+        }
+    }
 
     private companion object {
         const val TAG = "TingshuApi"
@@ -147,8 +168,10 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         JSONObject(text).has("books")
     }
 
-    suspend fun fetchLibrary(base: String): RawLibrary = withContext(Dispatchers.IO) {
-        val text = request("${base}library.json?t=${System.currentTimeMillis()}")
+    suspend fun fetchLibrary(base: String, cacheOnly: Boolean = false): RawLibrary? = withContext(Dispatchers.IO) {
+        val text = loadText(CacheStore.libraryKey(base), cacheOnly) {
+            request("${base}library.json?t=${System.currentTimeMillis()}")
+        } ?: return@withContext null
         val json = JSONObject(text)
 
         val arr = json.optJSONArray("books") ?: JSONArray()
@@ -185,8 +208,10 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         )
     }
 
-    suspend fun fetchMeta(base: String): Map<String, MetaRecord> = withContext(Dispatchers.IO) {
-        val text = request("${base}cgi-ts/meta?t=${System.currentTimeMillis()}", timeoutMs = 20000)
+    suspend fun fetchMeta(base: String, cacheOnly: Boolean = false): Map<String, MetaRecord> = withContext(Dispatchers.IO) {
+        val text = loadText(CacheStore.metaKey(base), cacheOnly) {
+            request("${base}cgi-ts/meta?t=${System.currentTimeMillis()}", timeoutMs = 20000)
+        } ?: return@withContext emptyMap()
         val json = JSONObject(text)
         if (!json.optBoolean("ok")) return@withContext emptyMap()
 
@@ -242,10 +267,20 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
      * 每章时长（秒），键是 track.path。
      * 服务端用 duration.pl 读文件头算出来，客户端拿去算「已听 X 小时 / 全书 Y 小时」。
      */
-    suspend fun fetchDurations(base: String, bookRel: String): Map<String, Double> = withContext(Dispatchers.IO) {
-        val url = "${base}cgi-ts/durations?b=" + URLEncoder.encode(bookRel, "UTF-8") +
-            "&t=" + System.currentTimeMillis()
-        val json = JSONObject(request(url, timeoutMs = 30000))
+    suspend fun fetchDurations(
+        base: String,
+        bookRel: String,
+        cacheOnly: Boolean = false,
+    ): Map<String, Double> = withContext(Dispatchers.IO) {
+        val key = CacheStore.durationsKey(base, Hex.encode("net:$bookRel"))
+        val text = loadText(key, cacheOnly) {
+            request(
+                "${base}cgi-ts/durations?b=" + URLEncoder.encode(bookRel, "UTF-8") +
+                    "&t=" + System.currentTimeMillis(),
+                timeoutMs = 30000,
+            )
+        } ?: return@withContext emptyMap()
+        val json = JSONObject(text)
         if (!json.optBoolean("ok")) return@withContext emptyMap()
         val items = json.optJSONObject("items") ?: return@withContext emptyMap()
         val out = HashMap<String, Double>(items.length())
@@ -258,8 +293,10 @@ class TingshuApi(private val tokenProvider: () -> String? = { null }) {
         out
     }
 
-    suspend fun fetchCollections(base: String): List<Collection> = withContext(Dispatchers.IO) {
-        val text = request("${base}cgi-ts/collections?t=${System.currentTimeMillis()}")
+    suspend fun fetchCollections(base: String, cacheOnly: Boolean = false): List<Collection> = withContext(Dispatchers.IO) {
+        val text = loadText(CacheStore.collectionsKey(base), cacheOnly) {
+            request("${base}cgi-ts/collections?t=${System.currentTimeMillis()}")
+        } ?: return@withContext emptyList()
         val json = JSONObject(text)
         if (!json.optBoolean("ok")) return@withContext emptyList()
         val arr = json.opt("data") as? JSONArray ?: return@withContext emptyList()

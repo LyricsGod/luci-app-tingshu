@@ -3,6 +3,7 @@ package com.tingshu.app.data
 import android.util.Log
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.io.IOException
 import java.text.Collator
 import java.util.Locale
 
@@ -24,19 +25,37 @@ class LibraryRepository(
         val metaJob = async { fetchMetaSafely(base) }
         val collectionsJob = async { fetchCollectionsSafely(base) }
 
-        val raw = libraryJob.await()
-        val meta = metaJob.await()
-        val collections = collectionsJob.await()
+        val raw = libraryJob.await() ?: throw IOException("书库为空")
+        assemble(base, raw, metaJob.await(), collectionsJob.await(), "网络")
+    }
 
+    /**
+     * 只用本地缓存拼一份快照，供启动/进页面时先把书架画出来，随后再走网络刷新。
+     * 没有缓存返回 null（这时界面照常等网络）。
+     */
+    suspend fun loadCached(base: String): LibrarySnapshot? = coroutineScope {
+        val raw = api.fetchLibrary(base, cacheOnly = true) ?: return@coroutineScope null
+        val meta = api.fetchMeta(base, cacheOnly = true)
+        val collections = api.fetchCollections(base, cacheOnly = true).takeIf { it.isNotEmpty() }
+        assemble(base, raw, meta, collections, "缓存")
+    }
+
+    private fun assemble(
+        base: String,
+        raw: TingshuApi.RawLibrary,
+        meta: Map<String, MetaRecord>,
+        collections: List<Collection>?,
+        from: String,
+    ): LibrarySnapshot {
         val collator = Collator.getInstance(Locale.CHINA)
         val books = raw.books
             .mapNotNull { toBook(base, it, meta) }
             .sortedWith(Comparator { a, b -> collator.compare(a.title, b.title) })
 
         val withCover = books.count { it.coverFile != null || it.coverUrl != null }
-        Log.i(TAG, "load 完成: ${books.size} 本 / meta ${meta.size} 条 / 有封面 $withCover 本")
+        Log.i(TAG, "$from: ${books.size} 本 / meta ${meta.size} 条 / 有封面 $withCover 本")
 
-        LibrarySnapshot(books, collections, raw.root, raw.error)
+        return LibrarySnapshot(books, collections, raw.root, raw.error)
     }
 
     private suspend fun fetchMetaSafely(base: String): Map<String, MetaRecord> =

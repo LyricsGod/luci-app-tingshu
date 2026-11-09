@@ -39,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,12 +85,16 @@ fun SettingsScreen(
     val authRole by vm.authRole.collectAsStateWithLifecycle()
     val columns by vm.columns.collectAsStateWithLifecycle()
     val miniAnimMs by vm.miniAnimMs.collectAsStateWithLifecycle()
+    val cacheSize by vm.cacheSize.collectAsStateWithLifecycle()
     val isAdmin = authRole == "admin"
 
     // 存完整地址（含协议/端口），分栏组件会自己拆开显示
     var address by rememberSaveable(serverUrl) { mutableStateOf(serverUrl) }
     var showBackup by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
+
+    // 进设置页时算一次缓存占用，清理后由 ViewModel 更新
+    LaunchedEffect(Unit) { vm.refreshCacheSize() }
     var showUpload by remember { mutableStateOf(false) }
     var showUsers by remember { mutableStateOf(false) }
 
@@ -263,8 +268,10 @@ fun SettingsScreen(
             SectionCard("数据") {
                 InfoLine("听书记录", "${progress.values.count { it.isReal }} 本")
                 InfoLine("暂停记录", "${pauseMarks.size} 条")
+                InfoLine("本地缓存", formatBytes(cacheSize))
                 if (isAdmin) ActionRow("服务器备份 / 恢复") { showBackup = true }
                 ActionRow("暂停记录") { showMarks = true }
+                ActionRow("清理缓存") { vm.clearCache() }
             }
 
             SectionCard("关于") {
@@ -308,6 +315,12 @@ fun SettingsScreen(
     if (showUsers) {
         UsersDialog(vm = vm, onDismiss = { showUsers = false })
     }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+    bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
 }
 
 @Composable

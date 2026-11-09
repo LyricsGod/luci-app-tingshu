@@ -77,6 +77,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     private val repository = container.repository
     private val player = container.player
     private val covers = container.covers
+    private val cache = container.cache
     private val importer = ArchiveImporter(application)
 
     val serverUrl = MutableStateFlow(prefs.serverUrl)
@@ -107,6 +108,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val uploadState = MutableStateFlow<UploadState>(UploadState.Idle)
     val backupInfo = MutableStateFlow<TingshuApi.BackupInfo?>(null)
     val backupBusy = MutableStateFlow(false)
+    /** 本地缓存占用（字节），设置页显示用 */
+    val cacheSize = MutableStateFlow(0L)
 
     val needsLogin = MutableStateFlow(prefs.authToken.isBlank())
     val authUser = MutableStateFlow(prefs.authUser)
@@ -193,6 +196,13 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         if (base.isBlank()) return
         if (_bookDurations.value.bookId == book.id && _bookDurations.value.items.isNotEmpty()) return
         viewModelScope.launch {
+            // 先用本地缓存把「已听/剩余」立刻画出来，再走网络刷新并更新缓存
+            val cached = withContext(Dispatchers.IO) {
+                runCatching { api.fetchDurations(base, book.folderId, cacheOnly = true) }.getOrNull()
+            }
+            if (!cached.isNullOrEmpty()) {
+                _bookDurations.value = BookDurations(book.id, cached)
+            }
             val map = withContext(Dispatchers.IO) {
                 runCatching { api.fetchDurations(base, book.folderId) }.getOrNull()
             }
@@ -200,6 +210,32 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                 _bookDurations.value = BookDurations(book.id, map)
             }
         }
+    }
+
+    /** 统计缓存占用，进设置页时调一次。 */
+    fun refreshCacheSize() {
+        viewModelScope.launch {
+            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() }
+        }
+    }
+
+    /**
+     * 清空本地缓存：只删磁盘上的副本，不动服务器数据，也不碰收听进度
+     * （进度存在独立的 store 里，清缓存不该让用户丢进度）。
+     */
+    fun clearCache() {
+        viewModelScope.launch {
+            val freed = withContext(Dispatchers.IO) { cache.clear() }
+            _bookDurations.value = BookDurations()
+            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() }
+            messages.tryEmit("已清理缓存 ${formatBytes(freed)}")
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+        else -> "$bytes B"
     }
 
     fun reload(initial: Boolean = false) {
@@ -213,6 +249,19 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             reloading = true
             refreshing.value = true
+            // 有本地缓存就先把书架画出来，别让用户对着转圈等网络。
+            // 下拉刷新同样走这里，只是缓存已经在了、看起来是瞬间完成。
+            if (books.value.isEmpty()) {
+                val cached = withContext(Dispatchers.IO) {
+                    runCatching { repository.loadCached(base) }.getOrNull()
+                }
+                if (cached != null && cached.books.isNotEmpty()) {
+                    books.value = cached.books
+                    libraryRoot.value = cached.root
+                    cached.collections?.let { mergeCollections(it) }
+                    loadState.value = LoadState.Ready
+                }
+            }
             if (initial || books.value.isEmpty()) loadState.value = LoadState.Loading
             try {
                 val snapshot = withContext(Dispatchers.IO) { repository.load(base) }
