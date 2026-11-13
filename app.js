@@ -13,7 +13,7 @@
 
   /* ================= 常量 ================= */
 
-  const APP_VERSION = '1.7.6';   // 打包脚本会从这里读取版本号，改这一处即可
+  const APP_VERSION = '1.7.7';   // 打包脚本会从这里读取版本号，改这一处即可
 
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'm4b', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba', 'webm']);
   const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp']);
@@ -27,6 +27,12 @@
   const SORT_LABELS = { recent: '最近收听', title: '书名', progress: '进度' };
   const THEMES = ['auto', 'dark', 'light'];
   const THEME_LABELS = { auto: '跟随系统', dark: '夜间模式', light: '日间模式' };
+
+  // 手机 / 电脑分开两套布局：auto 按设备自动判定，也可手动锁定
+  const UI_KEY = 'tingshu.uiMode';
+  const UI_MODES = ['auto', 'desktop', 'mobile'];
+  const UI_LABELS = { auto: '自动', desktop: '电脑版', mobile: '手机版' };
+  const UI_SHORT = { desktop: '电脑', mobile: '手机' };
 
   const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
   const isFiniteNumber = (n) => typeof n === 'number' && Number.isFinite(n);
@@ -200,6 +206,19 @@
     userBtn: $('#userBtn'),
     userLabel: $('#userLabel'),
     layoutBtn: $('#layoutBtn'),
+    // 手机 / 电脑双轨布局
+    sideNav: $('#sideNav'),
+    sideBrand: $('#sideBrand'),
+    sideStat: $('#sideStat'),
+    sideVersion: $('#sideVersion'),
+    sideModeText: $('#sideModeText'),
+    mobileTabs: $('#mobileTabs'),
+    viewBtn: $('#viewBtn'),
+    moreBtn: $('#moreBtn'),
+    toolbarExtra: $('#toolbarExtra'),
+    topbar: $('.topbar'),
+    topbarActions: $('.topbar-actions'),
+    sideTools: $('#sideTools'),
     authSheet: $('#authSheet'),
     authTitle: $('#authTitle'),
     authHint: $('#authHint'),
@@ -249,6 +268,8 @@
     scanning: false,
     scrubbing: false,
     playedOnce: false,    // 本次会话是否真的播放过（用于判断是否推送进度）
+    uiMode: 'auto',       // auto / desktop / mobile（用户选择）
+    ui: 'desktop',        // 当前真正生效的布局
   };
 
   // 章节多选（批量标已读 / 未读）：只在书籍详情页里用
@@ -371,6 +392,171 @@
     return state.role === 'admin';
   }
 
+  /* ================= 手机 / 电脑双轨布局 =================
+     手机与电脑是两套独立版式，而不是同一套布局靠零散断点挤一挤。
+     auto 按设备判定，也可以手动锁定；选择写进 localStorage，
+     <head> 里的前置脚本会在样式加载前先打上 html[data-ui]，避免闪屏。 */
+
+  function readUIMode() {
+    try {
+      const v = localStorage.getItem(UI_KEY);
+      return UI_MODES.includes(v) ? v : 'auto';
+    } catch { return 'auto'; }
+  }
+
+  function detectUI() {
+    const ua = navigator.userAgent || '';
+    const mobileUA = /Android|iPhone|iPod|Mobile|Windows Phone|HarmonyOS/i.test(ua);
+    let coarse = false;
+    try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch { /* 老浏览器 */ }
+    const narrow = (window.innerWidth || 1024) < 820;
+    // 手机 UA 直接进手机版；触屏 + 窄屏也进（平板横屏仍按电脑版）
+    return mobileUA || (coarse && narrow) ? 'mobile' : 'desktop';
+  }
+
+  function closeMoreMenu() {
+    document.body.classList.remove('more-open');
+  }
+
+  function setActiveTab(tab) {
+    if (el.mobileTabs) {
+      $$('#mobileTabs .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === tab));
+    }
+    if (el.sideNav) {
+      $$('#sideNav .side-link').forEach(b => b.classList.toggle('on', b.dataset.nav === tab));
+    }
+  }
+
+  function updateSideStat() {
+    if (!el.sideStat) return;
+    const collected = new Set();
+    state.collections.forEach(c => (c.bookIds || []).forEach(id => collected.add(id)));
+    const n = state.books.filter(b => !collected.has(b.id)).length;
+    const parts = [`${n} 本书`];
+    if (state.collections.length) parts.push(`${state.collections.length} 个合集`);
+    if (state.user) parts.push(`账号 ${state.user}`);
+    el.sideStat.textContent = parts.join(' · ');
+  }
+
+  /** 电脑版把顶栏功能整组搬进左侧栏，手机版移回顶栏。
+      移动的是同一个节点，事件监听和 el.* 引用都保持不变。 */
+  function arrangeTopbarActions() {
+    if (!el.topbar || !el.topbarActions) return;
+    if (state.ui === 'desktop' && el.sideTools) {
+      if (el.topbarActions.parentNode !== el.sideTools) el.sideTools.appendChild(el.topbarActions);
+    } else if (el.topbarActions.parentNode !== el.topbar) {
+      el.topbar.appendChild(el.topbarActions);
+    }
+  }
+
+  /** 重新套用版式：更新 data-ui、各处文案、书架列数，必要时重算章节定位条 */
+  function applyUIMode(announce = false) {
+    state.uiMode = readUIMode();
+    const ui = state.uiMode === 'auto' ? detectUI() : state.uiMode;
+    const changed = state.ui !== ui;
+    state.ui = ui;
+
+    const root = document.documentElement;
+    root.dataset.ui = ui;
+    root.dataset.uiMode = state.uiMode;
+    document.body.dataset.ui = ui;
+    if (changed) closeMoreMenu();
+    arrangeTopbarActions();
+
+    const label = state.uiMode === 'auto' ? '自动' : UI_LABELS[state.uiMode];
+    if (el.viewBtn) {
+      el.viewBtn.dataset.label = label;
+      el.viewBtn.title = `切换手机 / 电脑布局（当前：${label}${state.uiMode === 'auto' ? ' · ' + UI_SHORT[ui] : ''}）`;
+    }
+    if (el.sideModeText) {
+      el.sideModeText.textContent = state.uiMode === 'auto' ? `自动 · ${UI_SHORT[ui]}` : label;
+    }
+    if (el.sideVersion) el.sideVersion.textContent = '听书 v' + APP_VERSION;
+
+    updateSideStat();
+    applyLayout();
+    if (changed && state.bookView) {
+      requestAnimationFrame(() => updateTrackScrollBar(state.bookView));
+    }
+    if (announce) toast(`显示模式：${label}`, 1400);
+    return ui;
+  }
+
+  function cycleUIMode() {
+    const i = UI_MODES.indexOf(readUIMode());
+    const next = UI_MODES[(i + 1) % UI_MODES.length];
+    try { localStorage.setItem(UI_KEY, next); } catch { /* 隐私模式 */ }
+    closeMoreMenu();
+    const ui = applyUIMode(false);
+    toast(`显示模式：${UI_LABELS[next]}${next === 'auto' ? `（当前 ${UI_SHORT[ui]}）` : ''}`, 1600);
+  }
+
+  function bindUIModeEvents() {
+    if (el.viewBtn) el.viewBtn.addEventListener('click', cycleUIMode);
+
+    // 手机端「更多」下拉：只切 CSS class，工具按钮不搬 DOM，原有事件绑定全部保留
+    if (el.moreBtn) {
+      el.moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.body.classList.toggle('more-open');
+      });
+    }
+    if (el.toolbarExtra) {
+      el.toolbarExtra.addEventListener('click', (e) => {
+        if (e.target instanceof Element && e.target.closest('button')) closeMoreMenu();
+      });
+    }
+    document.addEventListener('click', (e) => {
+      if (!document.body.classList.contains('more-open')) return;
+      if (el.toolbarExtra && el.toolbarExtra.contains(e.target)) return;
+      if (el.moreBtn && el.moreBtn.contains(e.target)) return;
+      closeMoreMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('more-open')) closeMoreMenu();
+    });
+
+    if (el.sideBrand) el.sideBrand.addEventListener('click', () => goLibrary());
+    if (el.sideNav) {
+      el.sideNav.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('.side-link') : null;
+        if (!btn) return;
+        switch (btn.dataset.nav) {
+          case 'library': goLibrary(); break;
+          case 'playing':
+            if (state.current) el.expandBtn.click();
+            else toast('还没有正在收听的书');
+            break;
+          case 'collection': el.newCollectionBtn.click(); break;
+        }
+      });
+    }
+    if (el.mobileTabs) {
+      el.mobileTabs.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('.tab') : null;
+        if (!btn) return;
+        switch (btn.dataset.tab) {
+          case 'library': goLibrary(); setActiveTab('library'); break;
+          case 'player':
+            if (state.current) el.expandBtn.click();
+            else toast('还没有正在收听的书');
+            break;
+          case 'account': el.userBtn.click(); break;
+        }
+      });
+    }
+
+    // auto 模式下设备形态变了（横竖屏 / 浏览器设备模拟）才重新判定，手动锁定不受影响
+    let uiTimer = 0;
+    window.addEventListener('resize', () => {
+      if (state.uiMode !== 'auto') return;
+      clearTimeout(uiTimer);
+      uiTimer = setTimeout(() => {
+        if (detectUI() !== state.ui) applyUIMode(false);
+      }, 180);
+    });
+  }
+
   /** 每行本数：0 = 自动，否则限制在 2~5 */
   function clampColumns(value) {
     const n = Math.round(Number(value) || 0);
@@ -381,12 +567,17 @@
   function applyLayout() {
     if (!el.bookGrid) return;
     state.columns = clampColumns(state.columns);
-    if (state.columns > 0) {
+    // 手机版固定两列：窄屏下服务器保存的「每行 3~5 本」会把封面挤成缩略图。
+    // state.columns 原样保留，切回电脑版立即恢复用户的设置。
+    if (state.ui === 'mobile') {
+      el.bookGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+    } else if (state.columns > 0) {
       el.bookGrid.style.gridTemplateColumns = `repeat(${state.columns}, minmax(0, 1fr))`;
     } else {
       el.bookGrid.style.gridTemplateColumns = '';
     }
     if (el.layoutBtn) {
+      el.layoutBtn.hidden = state.ui === 'mobile';
       el.layoutBtn.textContent = state.columns > 0 ? `每行 ${state.columns} 本` : '每行自动';
     }
   }
@@ -882,6 +1073,7 @@
   }
 
   function renderLibrary() {
+    updateSideStat();
     const q = state.filter.trim().toLowerCase();
     let books = sortedBooks();
     if (q) books = books.filter(b => b.title.toLowerCase().includes(q));
@@ -965,6 +1157,7 @@
 
       const bar = document.createElement('div');
       bar.className = 'card-bar';
+      if (st.frac <= 0) bar.classList.add('zero');   // 没进度的书别留一条空槽
       const fill = document.createElement('i');
       fill.style.width = (st.frac * 100).toFixed(1) + '%';
       bar.appendChild(fill);
@@ -1066,6 +1259,7 @@
 
   function goBook(book) {
     state.bookView = book;
+    setActiveTab('library');
     el.libraryView.hidden = true;
     el.bookView.hidden = false;
     // 书籍页让目录容器吃掉剩余高度，直接贴到页面底部
@@ -1080,6 +1274,7 @@
 
   function goLibrary() {
     state.bookView = null;
+    setActiveTab('library');
     resetTrackSel();
     el.bookView.hidden = true;
     el.libraryView.hidden = false;
@@ -1322,13 +1517,23 @@
 
       const num = document.createElement('span');
       num.className = 't-idx';
-      num.textContent = playing ? '♪' : String(i + 1);
+      if (playing) {
+        num.textContent = '♪';
+      } else if (done.has(i)) {
+        // 已读勾直接占用序号位，右侧不再重复显示一个勾
+        num.classList.add('read');
+        num.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg>';
+        num.setAttribute('aria-label', `第 ${i + 1} 章 · 已读`);
+      } else {
+        num.textContent = String(i + 1);
+      }
 
       const body = document.createElement('span');
       body.className = 't-body';
       const nm = document.createElement('span');
       nm.className = 't-name';
       nm.textContent = track.title;
+      nm.title = track.title;          // 一行放不下时，鼠标悬停仍能看到完整章节名
       body.appendChild(nm);
 
       const time = document.createElement('span');
@@ -1336,12 +1541,9 @@
       const d = state.durations.get(durKey(book, i));
       time.textContent = d ? fmtTime(d) : '';
 
-      const mark = document.createElement('span');
-      mark.className = 't-state';
-      if (playing) mark.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8.5v7M12 6v12M15 9.5v5"/></svg>';
-      else if (done.has(i)) mark.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg>';
-
-      li.append(num, body, time, mark);
+      // 播放状态用序号上的 ♪、已读用序号上的勾表示，右侧不再重复放图标；
+      // 去掉 t-state 这一列，时长直接靠右，章节名也能多出一点空间
+      li.append(num, body, time);
       freq.appendChild(li);
     });
 
@@ -1757,14 +1959,36 @@
     node.replaceChildren();
     node.classList.add('mosaic');
 
-    // 九宫格：最多显示 9 本；不足 9 本用空位补齐，超过 9 本在最后一格叠 +N
-    const ids = (col.bookIds || []).slice(0, 9);
-    for (let i = 0; i < 9; i++) {
-      const cell = document.createElement('span');
-      cell.className = 'mosaic-cell';
+    // 收藏夹封面：不要任何背景 / 模糊铺底，就是一张干净的拼贴。
+    // 1~4 本 → 四宫格(2x2)；5 本及以上 → 九宫格(3x3)；
+    // 超过 9 本 → 前 8 格放封面，最后一格只显示「+N」。
+    // 格子恒为正方形，空位直接不画（不铺占位色），封面不会被裁成竖条。
+    const books = list.slice(0, 9);
+    const total = list.length;
+    const grid = total <= 4 ? 2 : 3;
+    const slots = grid * grid;
+    const shown = total > 9 ? 8 : Math.min(total, slots);
+    const gap = 2, pad = 3;                     // 百分比，避免依赖容器像素尺寸
+    const size = (100 - 2 * pad - (grid - 1) * gap) / grid;
 
-      const book = state.books.find(b => b.id === ids[i]);
-      if (book) {
+    for (let i = 0; i < slots; i++) {
+      const isCount = i === 8 && total > 9;
+      const book = !isCount && i < shown ? books[i] : null;
+      if (!book && !isCount) continue;         // 空位留白，不画背景
+
+      const cell = document.createElement('span');
+      cell.className = 'mosaic-cell' + (isCount ? ' count' : '');
+      cell.style.left = (pad + (i % grid) * (size + gap)).toFixed(3) + '%';
+      cell.style.top = (pad + Math.floor(i / grid) * (size + gap)).toFixed(3) + '%';
+      cell.style.width = size.toFixed(3) + '%';
+      cell.style.height = size.toFixed(3) + '%';
+
+      if (isCount) {
+        const more = document.createElement('span');
+        more.className = 'mosaic-more';
+        more.textContent = '+' + (total - 8);
+        cell.appendChild(more);
+      } else {
         const url = coverUrlOf(book);
         if (url) {
           const img = new Image();
@@ -1777,15 +2001,6 @@
           t.textContent = (book.title || '书').slice(0, 1);
           cell.appendChild(t);
         }
-      } else {
-        cell.classList.add('blank');
-      }
-
-      if (i === 8 && list.length > 9) {
-        const more = document.createElement('span');
-        more.className = 'mosaic-more';
-        more.textContent = '+' + (list.length - 8);
-        cell.appendChild(more);
       }
       node.appendChild(cell);
     }
@@ -1827,6 +2042,7 @@
     bar.className = 'card-bar';
     const fill = document.createElement('i');
     const avg = list.length ? list.reduce((s, b) => s + bookStats(b).frac, 0) / list.length : 0;
+    if (avg <= 0) bar.classList.add('zero');
     fill.style.width = (avg * 100).toFixed(1) + '%';
     bar.appendChild(fill);
 
@@ -4522,6 +4738,7 @@
      按界面区域拆成若干 bindXxx()，便于定位；每个函数只负责自己那一块的事件。 */
 
   function bind() {
+    bindUIModeEvents();
     bindAccountEvents();
     bindLibraryEvents();
     bindBookEvents();
@@ -5330,6 +5547,7 @@
   async function init() {
     await restoreSession();
 
+    applyUIMode();
     applyTheme();
     bind();
     setupMediaSession();

@@ -392,15 +392,28 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
 .track-item:hover { background: var(--surface); border-color: var(--line-soft); }
 .track-item .t-idx {
   width: 26px; flex: none; text-align: right;
+  display: inline-flex; align-items: center; justify-content: flex-end;
   font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
+/* 已读勾直接占序号位，右侧不再重复一个勾 */
+.track-item .t-idx.read { color: var(--accent); }
+.track-item .t-idx svg { width: 15px; height: 15px; }
 .track-item .t-body { flex: 1; min-width: 0; }
 .track-item .t-name {
-  font-size: 14px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* 必须是块级：inline span 上的 text-overflow 不生效，长章节名会直接
+     溢出 .t-body，压到右侧的时长 / 已读标记 / 章节定位条。
+     两行上限：短章节名仍是一行（列表密度不变），超长名折成两行并在末尾省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  font-size: 14px; color: var(--text-2);
 }
 .track-item .t-time { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
-.track-item .t-state { width: 16px; flex: none; display: grid; place-items: center; color: var(--accent); }
-.track-item .t-state svg { width: 15px; height: 15px; }
+/* 右侧不再放已读勾 / 播放图标：状态统一由章节序号位表示（♪ / 勾 / 数字） */
 .track-item.playing { background: var(--accent-soft); border-color: var(--accent-line); }
 .track-item.playing .t-name { color: var(--text); font-weight: 550; }
 .track-item.done .t-name { color: var(--muted); }
@@ -442,17 +455,12 @@ html[data-theme="dark"] .hero-cta { color: #221a12; }
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 8px 40px 12px 10px;
-  scrollbar-color: var(--line) transparent;
+  /* 目录里只保留右侧可拖动的章节定位条：隐藏原生滚动条，
+     否则会出现「原生滚动条 + 定位条」两条并排的移动条 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.track-scroller::-webkit-scrollbar { width: 8px; }
-.track-scroller::-webkit-scrollbar-thumb {
-  background: var(--line); border: 2px solid transparent;
-  background-clip: content-box; border-radius: 8px;
-}
-.track-scroller::-webkit-scrollbar-thumb:hover {
-  background: var(--muted); background-clip: content-box;
-}
-.track-scroller::-webkit-scrollbar-track { background: transparent; }
+.track-scroller::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 /* 章节快速定位条：只作用于目录容器，可点可拖 */
 .track-scrollbar {
@@ -727,9 +735,10 @@ input[type="range"]::-moz-range-thumb {
   display: block;
   padding: 0;
   overflow: hidden;
-  background: color-mix(in srgb, var(--surface-2) 82%, var(--line));
+  /* 收藏夹封面不加底色 / 边框，只让封面格子自己说话 */
+  background: transparent;
   box-shadow: none;
-  border: 1px solid var(--line-soft);
+  border: 0;
 }
 .mosaic-cell {
   position: absolute;
@@ -752,12 +761,13 @@ input[type="range"]::-moz-range-thumb {
   font-size: 11px; color: rgba(255,255,255,.92);
   text-shadow: 0 1px 4px rgba(0,0,0,.25);
 }
+/* 超过 9 本：最后一格只显示数字，不加遮罩背景 */
 .mosaic-more {
   position: absolute; inset: 0;
   display: grid; place-items: center;
-  background: rgba(20, 16, 12, .58);
-  color: #fff; font-size: 11.5px; font-weight: 650;
-  letter-spacing: .02em; backdrop-filter: blur(1px);
+  background: transparent;
+  color: var(--accent); font-size: clamp(15px, 5vw, 22px); font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .btn.ghost.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
 
@@ -1175,3 +1185,401 @@ html[data-theme="dark"] .toast { background: var(--toast-bg); color: var(--toast
   .user-label { display: none; }
   .icon-btn.user-btn { width: 38px; padding: 0; justify-content: center; }
 }
+
+/* ===========================================================
+   手机 / 电脑双轨版式
+   -----------------------------------------------------------
+   由 <head> 前置脚本 + app.js 打出 html[data-ui="mobile|desktop"]。
+   上面那些零散 @media 只作为旧浏览器的兜底；这里两套版式独立成章，
+   彼此不再互相挤：电脑版 = 固定侧栏 + 宽屏网格 + 双栏详情 / 播放器，
+   手机版 = 底部导航 + 固定两列 + 下拉工具 + 底部抽屉弹层。
+   选择器带 html[data-ui] 特异性更高，且排在文件最后，稳定覆盖旧断点。
+   =========================================================== */
+
+:root { --side-w: 236px; --tab-h: 0px; }
+
+/* 新增组件默认状态：桌面显示侧栏，手机显示底栏 */
+.side-nav, .mobile-tabs, .more-btn { display: none; }
+.toolbar-extra { display: flex; align-items: center; gap: 10px; }
+.view-btn .i-phone { display: none; }
+html[data-ui="mobile"] .view-btn .i-desktop { display: none; }
+html[data-ui="mobile"] .view-btn .i-phone { display: block; }
+
+/* ---------------- 电脑版：左侧固定导航 ---------------- */
+
+html[data-ui="desktop"] .side-nav {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 35;
+  width: var(--side-w);
+  display: flex; flex-direction: column;
+  padding: 22px 16px 18px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  box-shadow: 1px 0 0 var(--line-soft);
+  overflow-y: auto;
+}
+.side-brand {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 6px 20px; margin-bottom: 18px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer; user-select: none;
+}
+.side-links { display: flex; flex-direction: column; gap: 4px; }
+.side-link {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; height: 44px; padding: 0 12px; border-radius: 11px;
+  font-size: 13.5px; color: var(--text-2); text-align: left;
+  border: 1px solid transparent; transition: .16s;
+}
+.side-link svg { width: 19px; height: 19px; flex: none; }
+.side-link:hover { background: var(--surface-2); color: var(--text); }
+.side-link.on {
+  background: var(--accent-soft); color: var(--accent);
+  border-color: var(--accent-line); font-weight: 650;
+}
+.side-foot {
+  margin-top: auto; padding: 16px 8px 0;
+  border-top: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.side-stat { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.side-mode { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* 当前模式只作为信息显示，切换统一由工具栏里的视图按钮负责 */
+.side-mode-text { color: var(--text-2); font-weight: 600; }
+.side-version { opacity: .75; }
+
+/* ---------------- 电脑版：主内容区与顶栏 ---------------- */
+
+html[data-ui="desktop"] #pageScroll {
+  margin-left: var(--side-w);
+  width: calc(100% - var(--side-w));
+}
+html[data-ui="desktop"] main {
+  max-width: 1440px;
+  padding: 14px clamp(22px, 3vw, 48px) 48px;
+}
+/* 电脑版：顶栏功能整组搬进左侧栏，顶栏不再占位 */
+html[data-ui="desktop"] .topbar { display: none; }
+html[data-ui="desktop"] #pageScroll > main { padding-top: 22px; }
+
+.side-tools {
+  margin: 16px 0; padding: 14px 0;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+#sideTools .topbar-actions {
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  width: 100%;
+}
+#sideTools .search-wrap { width: 100%; height: 36px; margin: 0; padding: 0 10px; }
+#sideTools .icon-btn.user-btn {
+  width: 100%; height: 36px; justify-content: flex-start;
+  gap: 8px; padding: 0 10px;
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+#sideTools .user-label { max-width: none; flex: 1; }
+#sideTools .toolbar-extra {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+}
+#sideTools .toolbar-extra .icon-btn {
+  width: 100%; height: 36px; padding: 0;
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+#sideTools #viewBtn { display: grid; width: 100%; padding: 0; }
+#sideTools #viewBtn::after { content: none; }   /* 侧栏里用纯图标，当前模式看底部文字 */
+#sideTools .more-btn { display: none; }
+#sideTools #pickBtn { width: 100%; height: 36px; }
+html[data-ui="desktop"] .more-btn { display: none; }
+html[data-ui="desktop"] .mini { left: var(--side-w); }
+html[data-ui="desktop"] .mini-inner { max-width: 1440px; }
+html[data-ui="desktop"] .toast { left: calc(50% + var(--side-w) / 2); }
+
+/* ---------------- 电脑版：书架 ---------------- */
+
+html[data-ui="desktop"] .book-grid {
+  gap: 24px 20px;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+}
+html[data-ui="desktop"] .book-card {
+  padding: 10px 10px 13px; border-radius: 18px;
+  background: var(--surface); border: 1px solid var(--line-soft);
+  box-shadow: var(--shadow-sm);
+}
+html[data-ui="desktop"] .book-card:hover {
+  border-color: var(--accent-line); box-shadow: var(--shadow-md);
+}
+html[data-ui="desktop"] .card-edit { top: 16px; right: 16px; }
+html[data-ui="desktop"] .hero { padding: 24px 28px; margin: 8px 0 34px; }
+html[data-ui="desktop"] .shelf-head { margin-bottom: 20px; }
+html[data-ui="desktop"] .shelf-head h2 { font-size: 21px; }
+
+/* ---------------- 电脑版：书籍详情 ----------------
+   旧坑：body.book-open 时 #main 是 #pageScroll(flex column) 的子项，
+   基础规则里的 margin:0 auto 会阻止 stretch，让内容区收缩到内容宽度，
+   结果不管窗口多宽 #bookView 都只有 ~733px，目录被压到 300 多 px，
+   章节名被省略号截断，右侧定位条还贴着内容。这里显式撑满。 */
+body.book-open #main { width: 100%; margin: 0; align-self: stretch; }
+
+html[data-ui="desktop"] #bookView { max-width: 1440px; }
+
+/* 窗口不够宽时目录全宽单栏，保证章节名有足够空间 */
+html[data-ui="desktop"] body.book-open .track-panel { min-height: 320px; }
+
+/* 只有足够宽的屏幕才用「左资料 + 右目录」双栏 */
+@media (min-width: 1280px) {
+  html[data-ui="desktop"] body.book-open #bookView:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "toolbar toolbar" "hero tracks";
+    column-gap: 32px;
+  }
+  html[data-ui="desktop"] .book-toolbar { grid-area: toolbar; margin-bottom: 20px; }
+  html[data-ui="desktop"] .book-hero {
+    grid-area: hero; display: flex; flex-direction: column; gap: 20px;
+    margin: 0; align-self: start;
+  }
+  html[data-ui="desktop"] .book-cover.big {
+    width: min(280px, 100%); height: auto; aspect-ratio: 1 / 1; border-radius: 20px;
+  }
+  html[data-ui="desktop"] .book-cover.big .cv-fallback { font-size: 34px; }
+  html[data-ui="desktop"] .book-hero-info { padding-top: 0; }
+  html[data-ui="desktop"] .book-desc,
+  html[data-ui="desktop"] .book-progress-line { max-width: 100%; }
+  html[data-ui="desktop"] body.book-open .track-panel {
+    grid-area: tracks; margin-top: 0; min-height: 0;
+  }
+}
+
+/* ---------------- 电脑版：全屏播放器双栏 ---------------- */
+
+html[data-ui="desktop"] .sheet-inner {
+  width: min(960px, 100%);
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  grid-template-areas:
+    "top top"
+    "cover meta"
+    "cover seek"
+    "cover controls"
+    "cover tools"
+    "cover volume"
+    "foot foot";
+  align-content: center;
+  column-gap: 48px;
+  padding: 22px clamp(24px, 4vw, 56px) 30px;
+  min-height: 100%;
+}
+html[data-ui="desktop"] .sheet-top { grid-area: top; margin-bottom: 10px; }
+html[data-ui="desktop"] #sheetCover {
+  grid-area: cover; align-self: center;
+  width: min(300px, 100%); height: auto; aspect-ratio: 1 / 1; margin: 0;
+}
+html[data-ui="desktop"] .sheet-meta { grid-area: meta; text-align: left; margin-top: 0; align-self: end; }
+html[data-ui="desktop"] .sheet-meta h2 { font-size: 28px; }
+html[data-ui="desktop"] .seek { grid-area: seek; margin-top: 22px; }
+html[data-ui="desktop"] .sheet-controls { grid-area: controls; margin-top: 18px; }
+html[data-ui="desktop"] .sheet-tools { grid-area: tools; margin-top: 18px; }
+html[data-ui="desktop"] .volume { grid-area: volume; margin-top: 12px; }
+html[data-ui="desktop"] .sheet-foot { grid-area: foot; margin-top: 14px; padding-top: 16px; }
+html[data-ui="desktop"] .modal-card { width: min(560px, 100%); }
+html[data-ui="desktop"] .modal-card.wide { width: min(820px, 100%); }
+
+/* 电脑窗口较窄时把侧栏收窄一点，别把内容挤没了 */
+@media (max-width: 1000px) {
+  html[data-ui="desktop"] { --side-w: 196px; }
+  html[data-ui="desktop"] .side-link { gap: 9px; padding: 0 9px; font-size: 12.5px; }
+  html[data-ui="desktop"] .sheet-inner { column-gap: 28px; }
+}
+
+/* ---------------- 手机版：底部导航与占位 ---------------- */
+
+html[data-ui="mobile"] { --tab-h: 58px; }
+html[data-ui="mobile"] #pageScroll {
+  height: calc(100% - var(--tab-h) - env(safe-area-inset-bottom, 0px));
+}
+html[data-ui="mobile"] body:not(.mini-hidden) #pageScroll {
+  height: calc(100% - var(--mini-h) - var(--tab-h) - env(safe-area-inset-bottom, 0px));
+}
+html[data-ui="mobile"] .mini { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px)); }
+html[data-ui="mobile"] .toast {
+  bottom: calc(var(--mini-h) + var(--tab-h) + 16px + env(safe-area-inset-bottom, 0px));
+}
+html[data-ui="mobile"] .mobile-tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 42;
+  height: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--line);
+}
+.mobile-tabs .tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; color: var(--muted); font-size: 11px; transition: .15s;
+}
+.mobile-tabs .tab svg { width: 22px; height: 22px; }
+.mobile-tabs .tab.on { color: var(--accent); font-weight: 650; }
+.mobile-tabs .tab:active { transform: scale(.94); }
+
+/* ---------------- 手机版：顶栏与「更多」下拉 ---------------- */
+
+html[data-ui="mobile"] .topbar {
+  padding: 10px 12px; gap: 8px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+}
+html[data-ui="mobile"] .brand { gap: 8px; flex: none; }
+html[data-ui="mobile"] .brand-text p { display: none; }
+html[data-ui="mobile"] .brand-text h1 { font-size: 17px; }
+html[data-ui="mobile"] .logo { width: 34px; height: 34px; border-radius: 10px; font-size: 16px; }
+html[data-ui="mobile"] .topbar-actions { flex: 1 1 auto; min-width: 0; gap: 6px; justify-content: flex-end; }
+html[data-ui="mobile"] .search-wrap { flex: 1 1 auto; min-width: 0; width: auto; height: 36px; padding: 0 9px; }
+html[data-ui="mobile"] .search-wrap input { font-size: 13px; }
+html[data-ui="mobile"] .icon-btn.user-btn { width: 36px; height: 36px; padding: 0; justify-content: center; }
+html[data-ui="mobile"] .user-label { display: none; }
+html[data-ui="mobile"] #pickBtn { width: 36px; height: 36px; padding: 0; flex: none; }
+html[data-ui="mobile"] #pickBtn span { display: none; }
+html[data-ui="mobile"] #pickBtn svg { width: 18px; height: 18px; }
+html[data-ui="mobile"] .more-btn { display: grid; width: 36px; height: 36px; flex: none; }
+html[data-ui="mobile"] .more-btn svg { width: 20px; height: 20px; }
+html[data-ui="mobile"] body.more-open .more-btn { background: var(--accent-soft); color: var(--accent); }
+
+html[data-ui="mobile"] .toolbar-extra {
+  position: absolute; top: calc(100% - 2px); right: 8px; z-index: 46;
+  flex-direction: column; align-items: stretch; gap: 2px;
+  min-width: 196px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow-lg);
+  opacity: 0; visibility: hidden; transform: translateY(-8px) scale(.98);
+  transform-origin: top right;
+  transition: opacity .16s ease, transform .16s ease, visibility .16s;
+  pointer-events: none;
+}
+html[data-ui="mobile"] body.more-open .toolbar-extra {
+  opacity: 1; visibility: visible; transform: none; pointer-events: auto;
+}
+html[data-ui="mobile"] .toolbar-extra .icon-btn {
+  width: 100%; height: 44px; padding: 0 11px; gap: 12px;
+  display: flex; align-items: center; justify-content: flex-start;
+  border-radius: 10px;
+}
+html[data-ui="mobile"] .toolbar-extra .icon-btn::after {
+  content: attr(data-label);
+  font-size: 13.5px; color: var(--text-2); white-space: nowrap;
+}
+html[data-ui="mobile"] .toolbar-extra .icon-btn:hover { background: var(--surface-2); }
+
+/* ---------------- 手机版：书架 ---------------- */
+
+html[data-ui="mobile"] main { max-width: 100%; padding: 8px 14px 24px; }
+html[data-ui="mobile"] .shelf-head { flex-wrap: wrap; gap: 8px; margin: 0 2px 14px; align-items: center; }
+html[data-ui="mobile"] .shelf-head h2 { font-size: 16px; }
+html[data-ui="mobile"] .shelf-tools { gap: 6px; flex-wrap: wrap; }
+html[data-ui="mobile"] .shelf-tools .btn { height: 30px; padding: 0 9px; font-size: 12px; }
+html[data-ui="mobile"] #shelfCount { font-size: 11.5px; }
+html[data-ui="mobile"] .book-grid { gap: 16px 12px; }
+html[data-ui="mobile"] .book-card .book-cover { border-radius: 13px; }
+html[data-ui="mobile"] .card-title { font-size: 13.5px; margin-top: 8px; }
+html[data-ui="mobile"] .card-meta { font-size: 11px; }
+html[data-ui="mobile"] .card-edit { width: 30px; height: 30px; top: 6px; right: 6px; opacity: 1; transform: none; }
+html[data-ui="mobile"] .hero { padding: 14px; gap: 12px; margin: 6px 0 20px; border-radius: 18px; }
+html[data-ui="mobile"] .hero-cover { width: 58px; height: 58px; border-radius: 11px; }
+html[data-ui="mobile"] .hero-title { font-size: 17px; }
+html[data-ui="mobile"] .hero-cta { display: none; }
+html[data-ui="mobile"] .empty { padding-top: 26px; }
+html[data-ui="mobile"] .tree { font-size: 11px; padding: 12px; }
+
+/* ---------------- 手机版：书籍详情 ---------------- */
+
+html[data-ui="mobile"] #bookView { max-width: 100%; }
+html[data-ui="mobile"] .book-toolbar { margin: 2px 0 12px; }
+html[data-ui="mobile"] .book-toolbar .btn { height: 30px; padding: 0 9px; font-size: 12px; }
+html[data-ui="mobile"] .back-btn { font-size: 12.5px; margin: 0 0 0 -6px; padding: 6px 8px 6px 4px; }
+/* 手机端：进度条与操作按钮不再挤在封面右侧的窄列里，改成横跨整行、
+   与封面左边缘 / 目录卡片对齐。.book-hero-info 用 display:contents 让它的
+   子元素直接成为 grid item，不用搬 DOM，也不影响 app.js 里的元素引用。 */
+html[data-ui="mobile"] .book-hero {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  grid-template-areas:
+    "cover title"
+    "cover meta"
+    "cover desc"
+    "progress progress"
+    "actions actions";
+  column-gap: 13px;
+  align-items: start;
+  margin-bottom: 14px;
+}
+html[data-ui="mobile"] .book-hero-info { display: contents; }
+html[data-ui="mobile"] #bookCover { grid-area: cover; align-self: start; }
+html[data-ui="mobile"] #bookTitle { grid-area: title; }
+html[data-ui="mobile"] #bookMeta { grid-area: meta; }
+html[data-ui="mobile"] #bookDesc { grid-area: desc; }
+html[data-ui="mobile"] .book-cover.big { width: 100px; height: 100px; border-radius: 13px; }
+html[data-ui="mobile"] .book-cover.big .cv-fallback { font-size: 20px; }
+html[data-ui="mobile"] .book-hero-info h2 { font-size: 20px; }
+html[data-ui="mobile"] #bookMeta { font-size: 12px; margin-top: 6px; }
+html[data-ui="mobile"] .book-desc { font-size: 12.5px; margin-top: 10px; -webkit-line-clamp: 2; }
+html[data-ui="mobile"] .book-progress-line {
+  grid-area: progress; max-width: none; margin-top: 16px; gap: 10px;
+}
+html[data-ui="mobile"] .book-actions { grid-area: actions; margin-top: 14px; gap: 8px; }
+html[data-ui="mobile"] .book-actions .btn { height: 40px; padding: 0 13px; font-size: 13px; }
+html[data-ui="mobile"] .book-actions .btn.large { height: 42px; padding: 0 15px; font-size: 13.5px; }
+html[data-ui="mobile"] .track-panel { border-radius: 14px; }
+html[data-ui="mobile"] .track-panel > .track-tools { padding: 11px 10px 9px; }
+html[data-ui="mobile"] .track-tools .btn { height: 30px; padding: 0 9px; font-size: 12px; }
+html[data-ui="mobile"] .track-item { padding: 10px; gap: 10px; }
+/* 手机目录窄，章节名字号略小（两行上限沿用全局规则） */
+html[data-ui="mobile"] .track-item .t-name { font-size: 13.5px; }
+html[data-ui="mobile"] .track-scroller { padding: 6px 34px 10px 8px; }
+html[data-ui="mobile"] body.book-open #main { padding-top: 6px; padding-bottom: 6px; }
+html[data-ui="mobile"] body.book-open .book-hero { margin-bottom: 12px; }
+html[data-ui="mobile"] body.book-open .track-panel { min-height: 160px; }
+
+/* ---------------- 手机版：弹层改成底部抽屉 ---------------- */
+
+html[data-ui="mobile"] .modal { padding: 0; align-items: end; justify-items: stretch; }
+html[data-ui="mobile"] .modal-card,
+html[data-ui="mobile"] .modal-card.wide,
+html[data-ui="mobile"] .auth-card,
+html[data-ui="mobile"] .account-card,
+html[data-ui="mobile"] .crop-card,
+html[data-ui="mobile"] .users-card {
+  width: 100%; max-width: 100%;
+  max-height: 90vh;
+  border-radius: 22px 22px 0 0;
+  border-bottom: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: sheetUp .24s cubic-bezier(.22,.9,.3,1);
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+html[data-ui="mobile"] .modal-head { padding: 16px 16px 12px; }
+html[data-ui="mobile"] .modal-body { padding: 4px 16px 8px; }
+html[data-ui="mobile"] .modal-foot { padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+html[data-ui="mobile"] .auth-card { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+html[data-ui="mobile"] .upload-pick { grid-template-columns: 1fr; gap: 10px; }
+html[data-ui="mobile"] .upload-card { padding: 13px 12px; flex-direction: row; justify-content: flex-start; gap: 10px; text-align: left; }
+html[data-ui="mobile"] .edit-cover-row { gap: 12px; }
+html[data-ui="mobile"] .edit-cover { width: 88px; height: 88px; }
+html[data-ui="mobile"] .new-user-row input { flex: 1 1 100%; }
+html[data-ui="mobile"] .crop-viewport { width: min(300px, 76vw); }
+
+/* ---------------- 手机版：播放器与迷你条 ---------------- */
+
+html[data-ui="mobile"] .sheet-inner { padding: 12px 20px 24px; }
+html[data-ui="mobile"] .book-cover.xl {
+  width: min(240px, 58vw, 30vh); height: min(240px, 58vw, 30vh);
+}
+html[data-ui="mobile"] .sheet-meta { margin-top: 18px; }
+html[data-ui="mobile"] .sheet-tools { margin-top: 20px; }
+html[data-ui="mobile"] .mini-side { display: none; }
+html[data-ui="mobile"] .mini-inner { padding: 10px 12px; gap: 8px; }
+html[data-ui="mobile"] .mini-controls { gap: 2px; }
+html[data-ui="mobile"] .popover { min-width: 160px; }
+
+/* 还没开始听的书不画那条空进度槽，卡片底部更干净（占位高度保留，行高不跳） */
+.card-bar.zero { opacity: 0; }
+
+/* 数字格同样不带底色 */
+.mosaic-cell.count { background: transparent; }

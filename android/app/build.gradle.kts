@@ -20,8 +20,8 @@ android {
         applicationId = "com.tingshu.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 40
-        versionName = "1.7.6"
+        versionCode = 41
+        versionName = "1.7.7"
     }
 
     // 固定签名：本地和 CI 共用 android/keystore.properties 里的同一把钥匙，
