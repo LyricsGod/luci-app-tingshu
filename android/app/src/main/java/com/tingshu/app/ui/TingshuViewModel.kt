@@ -148,8 +148,12 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { player.transitions.collect { onTransition(it) } }
         player.setVolume(volume.value)
         if (prefs.authToken.isNotBlank() && prefs.serverUrl.isNotBlank()) {
+            val base = prefs.serverUrl
+            // 首屏不等网络：先只读磁盘缓存把书架画出来（几十毫秒），
+            // 校验登录态和拉最新数据并行去跑。以前是先 await authStatus 才读缓存，
+            // 路由器忙或弱网时要干等十几秒才看得到书。
+            viewModelScope.launch { loadCachedFirst(base) }
             viewModelScope.launch {
-                val base = prefs.serverUrl
                 val ok = runCatching { api.authStatus(base).authenticated }.getOrDefault(false)
                 if (!ok) {
                     needsLogin.value = true
@@ -238,6 +242,25 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         else -> "$bytes B"
     }
 
+    /**
+     * 首屏专用：只读磁盘缓存（书库索引 / 书籍元数据 / 合集），不发起任何网络请求。
+     *
+     * 刻意不碰收听进度和暂停记录：这两份数据实时性要求高，分别由
+     * ProgressStore / PauseMarksStore 独立持久化，必须以服务器为准，
+     * 不能拿缓存里的旧位置糊弄用户。
+     */
+    private suspend fun loadCachedFirst(base: String) {
+        if (base.isBlank() || books.value.isNotEmpty()) return
+        val cached = withContext(Dispatchers.IO) {
+            runCatching { repository.loadCached(base) }.getOrNull()
+        } ?: return
+        if (cached.books.isEmpty()) return
+        books.value = cached.books
+        libraryRoot.value = cached.root
+        cached.collections?.let { mergeCollections(it) }
+        loadState.value = LoadState.Ready
+    }
+
     fun reload(initial: Boolean = false) {
         val base = serverUrl.value.ifBlank { prefs.serverUrl }
         if (base.isBlank()) {
@@ -249,19 +272,9 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             reloading = true
             refreshing.value = true
-            // 有本地缓存就先把书架画出来，别让用户对着转圈等网络。
+            // 缓存只负责书架本身：进度和暂停记录一律等网络，绝不拿旧值顶上。
             // 下拉刷新同样走这里，只是缓存已经在了、看起来是瞬间完成。
-            if (books.value.isEmpty()) {
-                val cached = withContext(Dispatchers.IO) {
-                    runCatching { repository.loadCached(base) }.getOrNull()
-                }
-                if (cached != null && cached.books.isNotEmpty()) {
-                    books.value = cached.books
-                    libraryRoot.value = cached.root
-                    cached.collections?.let { mergeCollections(it) }
-                    loadState.value = LoadState.Ready
-                }
-            }
+            if (books.value.isEmpty()) loadCachedFirst(base)
             if (initial || books.value.isEmpty()) loadState.value = LoadState.Loading
             try {
                 val snapshot = withContext(Dispatchers.IO) { repository.load(base) }
