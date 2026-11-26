@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# 听书 · 增量同步入口（uhttpd CGI）
+#
+#   GET /cgi-ts/sync → {"ok":true,"lib":<sha>,"meta":<sha>,"cols":<sha>,
+#                        "progress":{"ok":true,"items":{...}}}
+#
+# 一次小请求就拿到：书库 / 元数据 / 合集的指纹 + 最新进度。
+# 手机端比对指纹，没变就不下载 library.json(约 1MB) 和 meta(约 1MB)，
+# 直接用本地缓存组装书架；progress 每次都带，保证「继续收听 / 第几章」秒级刷新。
+#
+# 指纹只对「内容」做 sha256，不含时间戳，所以只要书和封面没动就稳定不变。
+#
+
+. "${TINGSHU_LIB_DIR:-/usr/lib/tingshu}/auth.sh"
+ts_require_auth
+
+WWW_DIR="${TINGSHU_WWW_DIR:-/tmp/tingshu/www}"
+META_DIR="${TINGSHU_META_DIR:-/etc/tingshu/meta}"
+PDIR="${TINGSHU_PROGRESS_DIR:-$TS_USERS_DIR/$TS_USER/progress}"
+COLS="$TS_USERS_DIR/$TS_USER/collections.json"
+
+# ---- 指纹 ----
+# library.json 由 scan.sh 生成；没扫过就给 none，客户端据此走全量下载
+lib_sha="$(sha256sum "$WWW_DIR/library.json" 2>/dev/null | cut -d' ' -f1)"
+[ -z "$lib_sha" ] && lib_sha="none"
+
+# meta 是 /etc/tingshu/meta/*.json 一堆文件，按文件名顺序拼起来再算 sha；
+# 书名、简介、封面 base64 任意一个变化都会变。
+meta_sha="none"
+if [ -d "$META_DIR" ] && ls "$META_DIR"/*.json >/dev/null 2>&1; then
+	meta_sha="$(cat "$META_DIR"/*.json 2>/dev/null | sha256sum | cut -d' ' -f1)"
+fi
+
+# 合集按用户分文件，很小，但也给指纹，避免每次都写
+cols_sha="$(sha256sum "$COLS" 2>/dev/null | cut -d' ' -f1)"
+[ -z "$cols_sha" ] && cols_sha="none"
+
+# ---- 进度（和 cgi-ts/progress 的 GET 完全同构）----
+mkdir -p "$PDIR" 2>/dev/null
+
+ts_header
+printf '{"ok":true,"lib":"%s","meta":"%s","cols":"%s","progress":{"ok":true,"items":{' \
+	"$lib_sha" "$meta_sha" "$cols_sha"
+first=1
+for f in "$PDIR"/*.json; do
+	[ -f "$f" ] || continue
+	k="${f##*/}"
+	k="${k%.json}"
+	ts_is_hex "$k" || continue
+	[ "$first" -eq 1 ] || printf ','
+	first=0
+	printf '"%s":' "$k"
+	cat "$f"
+done
+printf '}}}\n'
+exit 0

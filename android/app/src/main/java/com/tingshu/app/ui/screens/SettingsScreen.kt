@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,13 +86,18 @@ fun SettingsScreen(
     val authRole by vm.authRole.collectAsStateWithLifecycle()
     val columns by vm.columns.collectAsStateWithLifecycle()
     val miniAnimMs by vm.miniAnimMs.collectAsStateWithLifecycle()
+    val cacheAhead by vm.cacheAhead.collectAsStateWithLifecycle()
+    val cacheBack by vm.cacheBack.collectAsStateWithLifecycle()
     val cacheSize by vm.cacheSize.collectAsStateWithLifecycle()
+    val mediaCacheSize by vm.mediaCacheSize.collectAsStateWithLifecycle()
+    val mediaCacheCount by vm.mediaCacheCount.collectAsStateWithLifecycle()
     val isAdmin = authRole == "admin"
 
     // 存完整地址（含协议/端口），分栏组件会自己拆开显示
     var address by rememberSaveable(serverUrl) { mutableStateOf(serverUrl) }
     var showBackup by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
+    var confirmClearMedia by remember { mutableStateOf(false) }
 
     // 进设置页时算一次缓存占用，清理后由 ViewModel 更新
     LaunchedEffect(Unit) { vm.refreshCacheSize() }
@@ -254,6 +260,45 @@ fun SettingsScreen(
                 }
             }
 
+            SectionCard("音频缓存") {
+                Text(
+                    "向后主动缓存（播放当前章时依次下载）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1, 3, 5, 10, 20).forEach { n ->
+                        FilterChip(
+                            selected = cacheAhead == n,
+                            onClick = { vm.setCacheAhead(n) },
+                            label = { Text("$n 集") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = colors.primaryContainer,
+                                selectedLabelColor = colors.primary,
+                            ),
+                        )
+                    }
+                }
+                Text(
+                    "向前保留（只保留已有缓存，不主动下载）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0, 3, 5, 10, 20).forEach { n ->
+                        FilterChip(
+                            selected = cacheBack == n,
+                            onClick = { vm.setCacheBack(n) },
+                            label = { Text("$n 集") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = colors.primaryContainer,
+                                selectedLabelColor = colors.primary,
+                            ),
+                        )
+                    }
+                }
+            }
+
             SectionCard("书库") {
                 InfoLine("书籍", "${books.size} 本")
                 InfoLine("章节", "${books.sumOf { it.chapterCount }} 章")
@@ -269,9 +314,12 @@ fun SettingsScreen(
                 InfoLine("听书记录", "${progress.values.count { it.isReal }} 本")
                 InfoLine("暂停记录", "${pauseMarks.size} 条")
                 InfoLine("本地缓存", formatBytes(cacheSize))
+                InfoLine("媒体缓存", "${formatBytes(mediaCacheSize)} · $mediaCacheCount 章")
+                InfoLine("预缓存", "向后 $cacheAhead 集 · 向前保留 $cacheBack 集")
                 if (isAdmin) ActionRow("服务器备份 / 恢复") { showBackup = true }
                 ActionRow("暂停记录") { showMarks = true }
                 ActionRow("清理缓存") { vm.clearCache() }
+                ActionRow("清理媒体缓存") { confirmClearMedia = true }
             }
 
             SectionCard("关于") {
@@ -314,6 +362,22 @@ fun SettingsScreen(
     }
     if (showUsers) {
         UsersDialog(vm = vm, onDismiss = { showUsers = false })
+    }
+    if (confirmClearMedia) {
+        AlertDialog(
+            onDismissRequest = { confirmClearMedia = false },
+            title = { Text("清理媒体缓存") },
+            text = { Text("将删除已预缓存的 $mediaCacheCount 章音频（${formatBytes(mediaCacheSize)}），不影响听书进度、暂停记录和书架缓存。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.clearMediaCache()
+                    confirmClearMedia = false
+                }) { Text("清理") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearMedia = false }) { Text("取消") }
+            },
+        )
     }
 }
 

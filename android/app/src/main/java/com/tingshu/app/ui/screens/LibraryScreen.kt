@@ -158,11 +158,19 @@ fun LibraryScreen(
         }
     }
 
-    val resumeBook = remember(books, progress, playerState.bookId) {
-        books.firstOrNull { it.id == playerState.bookId && progress[it.id]?.isReal == true }
-            ?: progress.entries.filter { it.value.isReal }
+    // 「继续收听」按最近收听时间选书，而不是死守播放器里残留的那一本。
+    // 旧写法只要 playerState.bookId 还在（切后台/进程重启后 MediaSession 会恢复），
+    // 就算网页端刚听了别的书、进度已经更新，卡片也一直显示旧书，看起来就是不刷新。
+    // 只有「正在播放」时才锁定当前书；暂停后按 updatedAt 取最近的一本。
+    val resumeBook = remember(booksById, progress, playerState.bookId, playerState.isPlaying) {
+        val playingId = playerState.bookId
+        if (playerState.isPlaying && playingId != null && progress[playingId]?.isReal == true) {
+            booksById[playingId]
+        } else {
+            progress.entries.filter { it.value.isReal && it.key in booksById }
                 .maxByOrNull { it.value.updatedAt }
-                ?.let { entry -> books.firstOrNull { it.id == entry.key } }
+                ?.let { booksById[it.key] }
+        }
     }
 
     PullToRefreshBox(

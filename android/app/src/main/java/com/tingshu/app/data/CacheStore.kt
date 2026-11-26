@@ -62,5 +62,10 @@ class CacheStore(context: Context) {
         fun metaKey(base: String) = "meta-${tag(base)}"
         fun collectionsKey(base: String) = "collections-${tag(base)}"
         fun durationsKey(base: String, bookHex: String) = "durations-${tag(base)}-$bookHex"
+
+        // 服务端内容指纹：和对应的原始响应一起落盘，下次同步时比对，一致就不下载
+        fun libraryShaKey(base: String) = "sha-library-${tag(base)}"
+        fun metaShaKey(base: String) = "sha-meta-${tag(base)}"
+        fun collectionsShaKey(base: String) = "sha-collections-${tag(base)}"
     }
 }

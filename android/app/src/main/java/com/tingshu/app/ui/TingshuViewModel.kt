@@ -16,6 +16,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import com.tingshu.app.TingshuApp
 import com.tingshu.app.data.ArchiveImporter
+import com.tingshu.app.data.AudioCacheStore
 import com.tingshu.app.data.Book
 import com.tingshu.app.data.ChapterMarks
 import com.tingshu.app.data.Collection
@@ -24,6 +25,7 @@ import com.tingshu.app.data.PauseMark
 import com.tingshu.app.data.PauseMarksStore
 import com.tingshu.app.data.Progress
 import com.tingshu.app.data.ProgressBackup
+import com.tingshu.app.data.RemoteProgress
 import com.tingshu.app.data.SortMode
 import com.tingshu.app.data.ThemeMode
 import com.tingshu.app.data.TingshuApi
@@ -78,6 +80,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     private val player = container.player
     private val covers = container.covers
     private val cache = container.cache
+    private val audioCache = container.audioCache
     private val importer = ArchiveImporter(application)
 
     val serverUrl = MutableStateFlow(prefs.serverUrl)
@@ -110,6 +113,12 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     val backupBusy = MutableStateFlow(false)
     /** 本地缓存占用（字节），设置页显示用 */
     val cacheSize = MutableStateFlow(0L)
+    /** 音频媒体缓存占用（字节），与书架缓存分开显示和清理。 */
+    val mediaCacheSize = MutableStateFlow(0L)
+    val mediaCacheCount = MutableStateFlow(0)
+    /** 向后主动预缓存的集数；向前只在已有缓存时保留，不主动下载。 */
+    val cacheAhead = MutableStateFlow(prefs.cacheAhead)
+    val cacheBack = MutableStateFlow(prefs.cacheBack)
 
     val needsLogin = MutableStateFlow(prefs.authToken.isBlank())
     val authUser = MutableStateFlow(prefs.authUser)
@@ -134,37 +143,53 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
 
     private var reloading = false
     private var lastProgressAt = 0L
+    /** 上次向服务器拉进度的时间，用于回前台刷新节流，避免和冷启动的 reload 重复请求。 */
+    private var lastPullAt = 0L
     private var wasPlaying = false
     private var pauseMarkGuardUntil = 0L
     private var persistJob: Job? = null
     private var sleepJob: Job? = null
     private var collectionsPushJob: Job? = null
     private var pausePushJob: Job? = null
+    private var prefetchJob: Job? = null
+    /** 清理媒体缓存后重建播放列表时不要再立刻把缓存填回去。 */
+    private var prefetchPaused = false
     private val lastPushAt = HashMap<String, Long>()
     private val lastPushKey = HashMap<String, String>()
 
     init {
+        // 冷启动时 reload 马上就会拉进度；先把节流时钟拨到现在，
+        // 让紧随其后的 MainActivity.onStart 跳过，避免两个 progress 请求
+        // 在慢速路由器上互相抢带宽（实测各要 12 秒，重复请求更慢）。
+        lastPullAt = System.currentTimeMillis()
         viewModelScope.launch { player.state.collect { onPlayerUpdate(it) } }
         viewModelScope.launch { player.transitions.collect { onTransition(it) } }
         player.setVolume(volume.value)
         if (prefs.authToken.isNotBlank() && prefs.serverUrl.isNotBlank()) {
             val base = prefs.serverUrl
-            // 首屏不等网络：先只读磁盘缓存把书架画出来（几十毫秒），
-            // 校验登录态和拉最新数据并行去跑。以前是先 await authStatus 才读缓存，
-            // 路由器忙或弱网时要干等十几秒才看得到书。
+            // 首屏不等网络：只读预构建快照把书架画出来（见 loadCachedFirst）。
+            // 登录校验和网络刷新完全并行——以前是 authStatus 返回后才 reload，
+            // 路由器慢 6 秒，连缓存里的书架都要等 6 秒。
             viewModelScope.launch { loadCachedFirst(base) }
-            viewModelScope.launch {
-                val ok = runCatching { api.authStatus(base).authenticated }.getOrDefault(false)
-                if (!ok) {
-                    needsLogin.value = true
-                } else {
-                    reload(initial = true)
-                }
-            }
+            viewModelScope.launch { reload(initial = true) }
         }
     }
 
     /* ---------------- 书库 ---------------- */
+
+    /**
+     * App 回到前台时只拉进度，不动书架。网页端或其它设备刚听过的书，切回来就能
+     * 立刻在「继续收听」上看到新位置，不用等整本书库重新扫描。
+     * 冷启动时 init 内的 reload 已经拉过，用 10 秒节流跳过重复请求。
+     */
+    fun resumeProgress() {
+        val base = serverUrl.value.ifBlank { prefs.serverUrl }
+        if (base.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - lastPullAt < 10_000L) return
+        lastPullAt = now
+        viewModelScope.launch { runCatching { pullProgress(base) } }
+    }
 
     /** 书籍页下拉刷新：重新拉这本书的暂停记录和听书进度（继续播放时间）。 */
     fun refreshBookData() {
@@ -219,7 +244,9 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     /** 统计缓存占用，进设置页时调一次。 */
     fun refreshCacheSize() {
         viewModelScope.launch {
-            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() }
+            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() + container.shelf.sizeBytes() }
+            mediaCacheSize.value = withContext(Dispatchers.IO) { audioCache.sizeBytes() }
+            mediaCacheCount.value = withContext(Dispatchers.IO) { audioCache.count() }
         }
     }
 
@@ -229,10 +256,37 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
      */
     fun clearCache() {
         viewModelScope.launch {
-            val freed = withContext(Dispatchers.IO) { cache.clear() }
+            val freed = withContext(Dispatchers.IO) {
+                val n = cache.sizeBytes() + cache.clear()
+                container.shelf.clear()
+                n
+            }
             _bookDurations.value = BookDurations()
-            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() }
+            cacheSize.value = withContext(Dispatchers.IO) { cache.sizeBytes() + container.shelf.sizeBytes() }
             messages.tryEmit("已清理缓存 ${formatBytes(freed)}")
+        }
+    }
+
+    /**
+     * 单独清理音频媒体缓存：不动书架缓存、进度和暂停记录。
+     * 正在播放时重建一次播放列表，让 ExoPlayer 从被删掉的文件 URI 回退到远程 URL。
+     */
+    fun clearMediaCache() {
+        val state = playerState.value
+        val book = state.bookId?.let { id -> books.value.firstOrNull { it.id == id } }
+        val wasPlaying = state.isPlaying
+        prefetchJob?.cancel()
+        viewModelScope.launch {
+            val freed = withContext(Dispatchers.IO) { audioCache.clear() }
+            mediaCacheSize.value = 0L
+            mediaCacheCount.value = 0
+            if (book != null) {
+                prefetchPaused = true
+                playBook(book, startIndex = state.index, positionMs = state.positionMs)
+                if (!wasPlaying) player.pause()
+                prefetchPaused = false
+            }
+            messages.tryEmit("已清理媒体缓存 ${formatBytes(freed)}")
         }
     }
 
@@ -252,7 +306,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     private suspend fun loadCachedFirst(base: String) {
         if (base.isBlank() || books.value.isNotEmpty()) return
         val cached = withContext(Dispatchers.IO) {
-            runCatching { repository.loadCached(base) }.getOrNull()
+            runCatching { repository.loadShelfCached(base) }.getOrNull()
+                ?: runCatching { repository.loadCached(base) }.getOrNull()
         } ?: return
         if (cached.books.isEmpty()) return
         books.value = cached.books
@@ -276,8 +331,33 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             // 下拉刷新同样走这里，只是缓存已经在了、看起来是瞬间完成。
             if (books.value.isEmpty()) loadCachedFirst(base)
             if (initial || books.value.isEmpty()) loadState.value = LoadState.Loading
+            // 增量同步：一个小请求（约 12KB）带回进度 + 三个指纹，优先应用进度，
+            // 「继续收听 / 第几章」不用等书库。指纹再交给 repository 决定要不要下载
+            // library.json(约 1.7MB) 和 meta(约 1.2MB)。老服务端没有该 CGI 时回退全量。
+            // 只先发这一个请求。路由器 uhttpd 并发有限，多个请求同时打过去会排队，
+            // 实测 sync 从 45ms 被拖到 20 秒。等它回来再发暂停记录。
+            val syncResult = withContext(Dispatchers.IO) {
+                runCatching { api.fetchSync(base) }
+            }
+            val sync = syncResult.getOrNull()
+            if (sync != null && sync.progress.isNotEmpty()) {
+                mergeRemoteProgress(sync.progress)
+            }
+            // sync 返回的 401 说明登录态失效，直接进登录页，不用再发后面的请求
+            val syncError = syncResult.exceptionOrNull()
+            if (syncError != null && isAuthError(syncError)) {
+                needsLogin.value = true
+                refreshing.value = false
+                reloading = false
+                return@launch
+            }
+            // 进度同步不依赖书库请求成功：路由器暂时返回坏 JSON 时，播放位置仍要能推上去
+            syncEnabled = true
+            val marksJob = launch {
+                runCatching { if (pullPauseMarks(base)) schedulePushPauseMarks() }
+            }
             try {
-                val snapshot = withContext(Dispatchers.IO) { repository.load(base) }
+                val snapshot = withContext(Dispatchers.IO) { repository.load(base, sync) }
                 books.value = snapshot.books
                 libraryRoot.value = snapshot.root
                 serverUrl.value = base
@@ -286,9 +366,9 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                 loadState.value =
                     if (snapshot.books.isEmpty() && snapshot.error != null) LoadState.Error(snapshot.error)
                     else LoadState.Ready
-                pullProgress(base)
-                if (pullPauseMarks(base)) schedulePushPauseMarks()
-                syncEnabled = true
+                // 老服务端没 sync 接口时进度还没回来，这里补一次；有新接口时直接跳过
+                if (sync == null) runCatching { pullProgress(base) }
+                marksJob.join()
             } catch (t: Throwable) {
                 if (isAuthError(t)) {
                     needsLogin.value = true
@@ -434,6 +514,18 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
         val next = value.coerceIn(0, 3000)
         miniAnimMs.value = next
         prefs.miniAnimMs = next
+    }
+
+    fun setCacheAhead(value: Int) {
+        val next = value.coerceIn(1, 20)
+        cacheAhead.value = next
+        prefs.cacheAhead = next
+    }
+
+    fun setCacheBack(value: Int) {
+        val next = value.coerceIn(0, 20)
+        cacheBack.value = next
+        prefs.cacheBack = next
     }
 
     fun loadUsers() {
@@ -916,11 +1008,16 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     /* ---------------- 进度同步 ---------------- */
 
     private suspend fun pullProgress(base: String) {
+        lastPullAt = System.currentTimeMillis()
         val remote = withContext(Dispatchers.IO) {
             runCatching { api.fetchProgress(base) }.getOrNull()
         } ?: return
-        if (remote.isEmpty()) return
+        mergeRemoteProgress(remote)
+    }
 
+    /** 把服务器进度并进本地：时间戳新的那一份胜出，避免旧响应盖掉播放中的新位置。 */
+    private fun mergeRemoteProgress(remote: Map<String, RemoteProgress>) {
+        if (remote.isEmpty()) return
         val merged = progress.value.toMutableMap()
         var changed = false
         for ((hex, rec) in remote) {
@@ -965,6 +1062,10 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun onTransition(transition: Transition) {
+        // 手动下一章、自动播完、从目录跳章都要继续往后预缓存。
+        books.value.firstOrNull { it.id == transition.bookId }?.let { book ->
+            if (transition.toIndex in book.tracks.indices) prefetchNext(book, transition.toIndex)
+        }
         val finished = transition.reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
             transition.reason == Transition.REASON_ENDED
         if (!finished) return
@@ -1143,6 +1244,8 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
                     b
                 }
             }
+            // 书名/封面进了快照，本地改过就得让快照失效，否则下次冷启动还是旧值
+            withContext(Dispatchers.IO) { repository.invalidateShelf(base) }
             messages.tryEmit(if (ok) "已保存并同步" else "已保存到本机，但没同步到路由器")
         }
     }
@@ -1488,12 +1591,68 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             else -> ((record?.time ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
         }
 
-        viewModelScope.launch {
-            val items = withContext(Dispatchers.IO) { buildMediaItems(target) }
-            player.setPlaylist(items, index, start)
-            player.setSpeed(prefs.speed)
-            player.setVolume(volume.value)
-            prefs.lastBookId = target.id
+        // 滑动窗口：只构造当前章节附近的 MediaItem，点播放不用先建几千个对象再跨进程传。
+        player.setPlaylist(target.id, target.tracks.size, index, start) { i ->
+            buildMediaItem(target, i)
+        }
+        player.setSpeed(prefs.speed)
+        player.setVolume(volume.value)
+        prefs.lastBookId = target.id
+        prefetchNext(target, index)
+    }
+
+    /**
+     * 播放第 N 章时，单线程按顺序把后面 5 章音频下载到媒体缓存。
+     * 下载完一章才继续下一章，避免弱网下抢占正在播放的带宽；
+     * 中途切章会取消旧队列，.part 临时文件下次会被覆盖。
+     */
+    private fun prefetchNext(book: Book, fromIndex: Int) {
+        if (prefetchPaused) return
+        val base = serverUrl.value.ifBlank { prefs.serverUrl }
+        if (base.isBlank() || book.tracks.isEmpty()) return
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            val ahead = cacheAhead.value
+            val back = cacheBack.value
+            val start = (fromIndex + 1).coerceAtMost(book.tracks.lastIndex)
+            val end = (fromIndex + ahead).coerceAtMost(book.tracks.lastIndex)
+            val keepFirst = (fromIndex - back).coerceAtLeast(0)
+            val keep = keepFirst..end.coerceAtLeast(keepFirst)
+            val protectedFiles = keep.filter { it in book.tracks.indices }
+                .map { i -> audioCache.fileOf(base, book.tracks[i].path) }
+
+            // 向前只登记已经存在的缓存，绝不主动下载；没有就跳过。
+            for (i in keepFirst until fromIndex) {
+                if (i !in book.tracks.indices) continue
+                val track = book.tracks[i]
+                if (audioCache.has(base, track.path)) audioCache.mark(base, track.path, book.id, i)
+            }
+            if (fromIndex in book.tracks.indices) {
+                val current = book.tracks[fromIndex]
+                if (audioCache.has(base, current.path)) {
+                    audioCache.mark(base, current.path, book.id, fromIndex)
+                }
+            }
+
+            // 向后才是主动预缓存，按用户设置的集数顺序下载。
+            for (i in start..end) {
+                if (!isActive) break
+                val track = book.tracks[i]
+                val cached = audioCache.cachedFile(base, track.path)
+                if (cached != null) {
+                    audioCache.mark(base, track.path, book.id, i)
+                } else {
+                    val target = audioCache.fileOf(base, track.path)
+                    if (api.downloadAudio(track.url, target)) audioCache.mark(base, track.path, book.id, i)
+                }
+                mediaCacheSize.value = audioCache.sizeBytes()
+                mediaCacheCount.value = audioCache.count()
+            }
+
+            // 只保留当前书 [fromIndex-back, fromIndex+ahead] 的缓存，其它书不动。
+            audioCache.retain(book.id, keep, protectedFiles, AudioCacheStore.MAX_BYTES)
+            mediaCacheSize.value = audioCache.sizeBytes()
+            mediaCacheCount.value = audioCache.count()
         }
     }
 
@@ -1595,7 +1754,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
 
     /* ---------------- 内部 ---------------- */
 
-    private fun buildMediaItems(book: Book): List<MediaItem> {
+    private fun buildMediaItem(book: Book, index: Int): MediaItem {
         val extras = Bundle().apply {
             putString(PlaybackController.KEY_BOOK_ID, book.id)
             putString(PlaybackController.KEY_BOOK_TITLE, book.title)
@@ -1603,26 +1762,30 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
             putString(PlaybackController.KEY_COVER_URL, book.coverUrl.orEmpty())
         }
 
-        return book.tracks.mapIndexed { index, track ->
-            // 通知栏/锁屏封面要和书架一致：优先用 meta 里解出来的本地封面，其次才用文件夹封面
-            val artworkUri = book.coverFile?.let { Uri.fromFile(it) }
-                ?: book.coverUrl?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        // 通知栏/锁屏封面要和书架一致：优先用 meta 里解出来的本地封面，其次才用文件夹封面
+        val artworkUri = book.coverFile?.let { Uri.fromFile(it) }
+            ?: book.coverUrl?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
 
-            val metadata = MediaMetadata.Builder()
-                .setTitle(track.title)
-                .setArtist(book.title)
-                .setAlbumTitle(book.title)
-                .setTrackNumber(index + 1)
-                .setExtras(extras)
-                .apply { artworkUri?.let { setArtworkUri(it) } }
-                .build()
+        val track = book.tracks[index]
+        val metadata = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(book.title)
+            .setAlbumTitle(book.title)
+            .setTrackNumber(index + 1)
+            .setExtras(extras)
+            .apply { artworkUri?.let { setArtworkUri(it) } }
+            .build()
 
-            MediaItem.Builder()
-                .setMediaId("${book.id}#$index")
-                .setUri(track.url)
-                .setMediaMetadata(metadata)
-                .build()
-        }
+        // 命中媒体缓存就直接播本地文件；没有缓存时无缝回退远程 URL。
+        val base = serverUrl.value.ifBlank { prefs.serverUrl }
+        val cached = if (base.isBlank()) null else audioCache.cachedFile(base, track.path)
+        val uri = cached?.let { Uri.fromFile(it) } ?: Uri.parse(track.url)
+
+        return MediaItem.Builder()
+            .setMediaId("${book.id}#$index")
+            .setUri(uri)
+            .setMediaMetadata(metadata)
+            .build()
     }
 
     private fun humanError(t: Throwable): String {

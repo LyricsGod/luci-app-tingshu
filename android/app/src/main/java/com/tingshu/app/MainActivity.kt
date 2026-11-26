@@ -33,6 +33,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // 回到前台立刻拉一次服务器进度：网页端/其它设备听过的书，
+        // 「继续收听」马上显示新位置（内部有 10 秒节流，冷启动 reload 不会重复请求）
+        viewModel.resumeProgress()
+    }
+
     override fun onStop() {
         super.onStop()
         // 退到后台时立刻落盘 + 推一次进度，避免被系统杀掉丢位置

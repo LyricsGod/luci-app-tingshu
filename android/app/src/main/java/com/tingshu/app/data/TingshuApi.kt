@@ -3,10 +3,12 @@ package com.tingshu.app.data
 import android.util.Log
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -56,6 +58,17 @@ class TingshuApi(
     data class RawLibrary(val root: String, val error: String?, val books: List<RawBook>)
     data class RawBook(val id: String, val title: String, val cover: String?, val tracks: List<RawTrack>)
     data class RawTrack(val title: String, val path: String)
+
+    /**
+     * 增量同步响应：一次小请求（约 12KB）带回三个指纹 + 全量进度。
+     * 指纹没变就跳过 library.json / meta 这两个加起来近 3MB 的下载。
+     */
+    data class SyncPayload(
+        val librarySha: String,
+        val metaSha: String,
+        val collectionsSha: String,
+        val progress: Map<String, RemoteProgress>,
+    )
 
     data class AuthStatus(
         val configured: Boolean,
@@ -168,14 +181,18 @@ class TingshuApi(
         JSONObject(text).has("books")
     }
 
-    suspend fun fetchLibrary(base: String): RawLibrary = withContext(Dispatchers.IO) {
+    /** 取 library.json 原文（成功写缓存，失败回退），供快照指纹复用。 */
+    suspend fun fetchLibraryText(base: String): String = withContext(Dispatchers.IO) {
         val key = CacheStore.libraryKey(base)
-        val text = try {
+        try {
             request("${base}library.json?t=${System.currentTimeMillis()}").also { cache?.write(key, it) }
         } catch (t: Throwable) {
             cache?.read(key) ?: throw t
         }
-        parseLibrary(text)
+    }
+
+    suspend fun fetchLibrary(base: String): RawLibrary = withContext(Dispatchers.IO) {
+        parseLibrary(fetchLibraryText(base))
     }
 
     /** 只读本地缓存的书库；没有缓存返回 null（界面先拿它渲染，再走网络刷新）。 */
@@ -184,7 +201,7 @@ class TingshuApi(
         runCatching { parseLibrary(text) }.getOrNull()
     }
 
-    private fun parseLibrary(text: String): RawLibrary {
+    fun parseLibrary(text: String): RawLibrary {
         val json = JSONObject(text)
 
         val arr = json.optJSONArray("books") ?: JSONArray()
@@ -247,12 +264,37 @@ class TingshuApi(
         out
     }
 
+    /**
+     * 增量同步入口：一个小请求同时拿到「书籍 / 元数据 / 合集」指纹和最新进度。
+     * 老服务端没有这个 CGI 时抛异常，调用方回退到原来的逐接口拉取。
+     */
+    suspend fun fetchSync(base: String): SyncPayload = withContext(Dispatchers.IO) {
+        val text = request("${base}cgi-ts/sync?t=${System.currentTimeMillis()}", timeoutMs = 20000)
+        val json = JSONObject(text)
+        if (!json.optBoolean("ok")) throw IOException("sync not ok")
+        val obj = json.optJSONObject("progress")
+        val progress = if (obj != null && obj.optBoolean("ok")) {
+            parseProgressItems(obj.optJSONObject("items"))
+        } else {
+            emptyMap()
+        }
+        SyncPayload(
+            librarySha = json.optString("lib").ifBlank { "none" },
+            metaSha = json.optString("meta").ifBlank { "none" },
+            collectionsSha = json.optString("cols").ifBlank { "none" },
+            progress = progress,
+        )
+    }
+
     suspend fun fetchProgress(base: String): Map<String, RemoteProgress> = withContext(Dispatchers.IO) {
         val text = request("${base}cgi-ts/progress?t=${System.currentTimeMillis()}")
         val json = JSONObject(text)
         if (!json.optBoolean("ok")) return@withContext emptyMap()
+        parseProgressItems(json.optJSONObject("items"))
+    }
 
-        val items = json.optJSONObject("items") ?: JSONObject()
+    private fun parseProgressItems(items: JSONObject?): Map<String, RemoteProgress> {
+        if (items == null) return emptyMap()
         val out = HashMap<String, RemoteProgress>(items.length())
         val keys = items.keys()
         while (keys.hasNext()) {
@@ -273,7 +315,7 @@ class TingshuApi(
                 updatedAt = o.optLong("updatedAt", 0L),
             )
         }
-        out
+        return out
     }
 
     /**
@@ -606,6 +648,53 @@ class TingshuApi(
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.getDefault())
             .format(java.util.Date())
         return BackupDownload(backupUrl(base, "export", mode, user), "tingshu-$mode-$stamp.tar.gz", headers)
+    }
+
+    /**
+     * 下载一章音频到媒体缓存。先写 .part，完整落盘后再原子改名，
+     * 防止 ExoPlayer 打开半截文件。返回 false 时调用方继续用远程 URL 播放。
+     */
+    suspend fun downloadAudio(url: String, destination: File): Boolean = withContext(Dispatchers.IO) {
+        // 路由器 / 弱网偶发 EOF，重试一次；不成功就由播放器继续走远程 URL。
+        repeat(2) { attempt ->
+            if (downloadAudioOnce(url, destination)) return@withContext true
+            if (attempt == 0) delay(350)
+        }
+        false
+    }
+
+    private fun downloadAudioOnce(url: String, destination: File): Boolean {
+        destination.parentFile?.mkdirs()
+        // 切章取消旧队列时，旧下载可能还在阻塞读；用唯一临时名避免两次下载写同一个 .part。
+        val part = File(destination.parentFile, destination.name + ".part-${System.nanoTime()}")
+        val startedAt = System.nanoTime()
+        return runCatching {
+            val conn = openConnection(url, "GET", 12_000, 30_000)
+            try {
+                val code = conn.responseCode
+                if (code !in 200..299) throw IOException("HTTP $code")
+                // 服务端若把 media 改成鉴权 CGI，失败页多半是 text/*；不要把它缓存成音频。
+                val type = conn.contentType?.lowercase(Locale.ROOT).orEmpty()
+                if (type.startsWith("text/")) throw IOException("不是音频: $type")
+                conn.inputStream.use { src ->
+                    FileOutputStream(part).use { dst -> src.copyTo(dst, 64 * 1024) }
+                }
+                if (part.length() < 1024L) throw IOException("音频文件过小")
+                Log.d(TAG, "预缓存 ${shortUrl(url)} -> ${part.length()}B, ${elapsedMs(startedAt)}ms")
+                if (part.renameTo(destination)) true
+                else {
+                    if (destination.exists()) destination.delete()
+                    if (part.renameTo(destination)) true else throw IOException("无法写入缓存")
+                }
+            } finally {
+                conn.disconnect()
+                if (part.exists()) runCatching { part.delete() }
+            }
+        }.onFailure {
+            Log.w(TAG, "预缓存失败 ${shortUrl(url)}: ${it.javaClass.simpleName} ${it.message}")
+            runCatching { part.delete() }
+            false
+        }.getOrDefault(false)
     }
 
     /** 流式上传备份包并恢复；不会把整个文件读进内存。 */

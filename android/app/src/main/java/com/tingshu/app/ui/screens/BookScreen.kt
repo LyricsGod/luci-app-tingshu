@@ -149,9 +149,15 @@ fun BookScreen(
     var selecting by rememberSaveable(book.id) { mutableStateOf(false) }
     var selected by remember(book.id) { mutableStateOf(setOf<Int>()) }
 
-    val chapterListState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     var ascending by rememberSaveable(book.id) { mutableStateOf(true) }
+    // 首次组合就直接从「上次听到」的那一章开始，不再先画第 1 章再 scrollToItem。
+    // 老写法打开 2813 章的书要先把前 100 多项量完再跳，肉眼可见地卡一下。
+    val initialChapterPos = remember(book.id) {
+        val idx = (record?.index ?: 0).coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
+        if (ascending) idx else (book.chapterCount - 1 - idx)
+    }
+    val chapterListState = rememberLazyListState(initialFirstVisibleItemIndex = initialChapterPos)
+    val scope = rememberCoroutineScope()
     var seekJob by remember { mutableStateOf<Job?>(null) }
     val displayIndices: List<Int> = remember(book.tracks, ascending) {
         if (ascending) book.tracks.indices.toList() else book.tracks.indices.reversed().toList()
@@ -162,7 +168,7 @@ fun BookScreen(
     val visibleChapterNumber = displayIndices.getOrNull(visibleChapterPos)?.plus(1) ?: 1
 
     // 打开书籍时把目录定位到「继续收听」的那一章；切换正/倒序时再定位一次
-    var resumeLocated by rememberSaveable(book.id) { mutableStateOf(false) }
+    var resumeLocated by rememberSaveable(book.id) { mutableStateOf(record != null) }
     fun resumeChapterPos(): Int {
         val idx = (if (isCurrent) playerState.index else (record?.index ?: 0))
             .coerceIn(0, (book.chapterCount - 1).coerceAtLeast(0))
@@ -272,7 +278,9 @@ fun BookScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = (availableHeight - 220.dp).coerceAtLeast(120.dp)),
-            contentPadding = PaddingValues(bottom = if (selecting) 118.dp else 8.dp),
+            // 多选底部操作条只遮挡目录，留白也放在目录内部；放在这里会把目录整体往下推，
+            // 在按钮和目录之间出现一大块空白。
+            contentPadding = PaddingValues(bottom = 8.dp),
         ) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
@@ -665,7 +673,12 @@ private fun ChapterPanel(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(end = 34.dp, bottom = 8.dp),
+                    // 多选时底部操作条盖在目录上，把留白放在章节列表内部，
+                    // 既能滚到最后几章，也不会让目录卡片整体下移。
+                    contentPadding = PaddingValues(
+                        end = 34.dp,
+                        bottom = if (selecting) 118.dp else 8.dp,
+                    ),
                     content = content,
                 )
                 if (count > 3) {

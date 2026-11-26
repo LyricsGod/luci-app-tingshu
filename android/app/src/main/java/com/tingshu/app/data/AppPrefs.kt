@@ -66,6 +66,16 @@ class AppPrefs(context: Context) {
         get() = prefs.getInt(KEY_MINI_ANIM, 500)
         set(value) = edit { putInt(KEY_MINI_ANIM, value.coerceIn(0, 3000)) }
 
+    /** 播放时向后预缓存的集数，1~20。 */
+    var cacheAhead: Int
+        get() = prefs.getInt(KEY_CACHE_AHEAD, 5).coerceIn(1, 20)
+        set(value) = edit { putInt(KEY_CACHE_AHEAD, value.coerceIn(1, 20)) }
+
+    /** 当前章之前保留的缓存集数，0~20。 */
+    var cacheBack: Int
+        get() = prefs.getInt(KEY_CACHE_BACK, 5).coerceIn(0, 20)
+        set(value) = edit { putInt(KEY_CACHE_BACK, value.coerceIn(0, 20)) }
+
     private companion object {
         const val KEY_SERVER = "server_url"
         const val KEY_SPEED = "playback_speed"
@@ -78,5 +88,7 @@ class AppPrefs(context: Context) {
         const val KEY_ROLE = "auth_role"
         const val KEY_COLUMNS = "layout_columns"
         const val KEY_MINI_ANIM = "mini_anim_ms"
+        const val KEY_CACHE_AHEAD = "cache_ahead"
+        const val KEY_CACHE_BACK = "cache_back"
     }
 }
