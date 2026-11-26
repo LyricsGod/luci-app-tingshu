@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -51,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -98,6 +100,10 @@ fun SettingsScreen(
     var showBackup by remember { mutableStateOf(false) }
     var showMarks by remember { mutableStateOf(false) }
     var confirmClearMedia by remember { mutableStateOf(false) }
+    // 输入框自己持有文本，清空后才能重新输入；数值仍即时写入 ViewModel。
+    var miniText by rememberSaveable { mutableStateOf(miniAnimMs.toString()) }
+    var aheadText by rememberSaveable { mutableStateOf(cacheAhead.toString()) }
+    var backText by rememberSaveable { mutableStateOf(cacheBack.toString()) }
 
     // 进设置页时算一次缓存占用，清理后由 ViewModel 更新
     LaunchedEffect(Unit) { vm.refreshCacheSize() }
@@ -235,68 +241,53 @@ fun SettingsScreen(
 
             SectionCard("迷你播放器") {
                 Text(
-                    "首次出现时从下往上滑入的时长（默认 0.5 秒）",
+                    "滑入动画时长（毫秒）；0 表示关闭动画",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(
-                        0 to "关闭", 300 to "0.3s", 500 to "0.5s",
-                        1000 to "1s", 1500 to "1.5s", 2000 to "2s",
-                    ).forEach { (ms, label) ->
-                        FilterChip(
-                            selected = miniAnimMs == ms,
-                            onClick = { vm.setMiniAnimMs(ms) },
-                            label = { Text(label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = colors.primaryContainer,
-                                selectedLabelColor = colors.primary,
-                            ),
-                        )
-                    }
-                }
+                NumberField(
+                    label = "动画时长",
+                    value = miniText,
+                    suffix = "ms",
+                    range = 0..3000,
+                    onValue = { text, number ->
+                        miniText = text
+                        vm.setMiniAnimMs(number)
+                    },
+                )
             }
 
             SectionCard("音频缓存") {
                 Text(
-                    "向后主动缓存（播放当前章时依次下载）",
+                    "向后主动缓存：播放当前章后依次下载；0 表示关闭",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(1, 3, 5, 10, 20).forEach { n ->
-                        FilterChip(
-                            selected = cacheAhead == n,
-                            onClick = { vm.setCacheAhead(n) },
-                            label = { Text("$n 集") },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = colors.primaryContainer,
-                                selectedLabelColor = colors.primary,
-                            ),
-                        )
-                    }
-                }
+                NumberField(
+                    label = "向后缓存",
+                    value = aheadText,
+                    suffix = "集",
+                    range = 0..20,
+                    onValue = { text, number ->
+                        aheadText = text
+                        vm.setCacheAhead(number)
+                    },
+                )
                 Text(
-                    "向前保留（只保留已有缓存，不主动下载）",
+                    "向前保留：只保留已有缓存，不主动下载；0 表示关闭",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(0, 3, 5, 10, 20).forEach { n ->
-                        FilterChip(
-                            selected = cacheBack == n,
-                            onClick = { vm.setCacheBack(n) },
-                            label = { Text("$n 集") },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = colors.primaryContainer,
-                                selectedLabelColor = colors.primary,
-                            ),
-                        )
-                    }
-                }
+                NumberField(
+                    label = "向前保留",
+                    value = backText,
+                    suffix = "集",
+                    range = 0..20,
+                    onValue = { text, number ->
+                        backText = text
+                        vm.setCacheBack(number)
+                    },
+                )
             }
 
             SectionCard("书库") {
@@ -379,6 +370,33 @@ fun SettingsScreen(
             },
         )
     }
+}
+
+@Composable
+private fun NumberField(
+    label: String,
+    value: String,
+    suffix: String,
+    range: IntRange,
+    onValue: (String, Int) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { raw ->
+            val digits = raw.filter { it.isDigit() }
+            if (digits.isEmpty()) {
+                onValue("", range.first)
+            } else {
+                val number = (digits.toIntOrNull() ?: range.first).coerceIn(range)
+                onValue(number.toString(), number)
+            }
+        },
+        label = { Text(label) },
+        suffix = { Text(suffix) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 private fun formatBytes(bytes: Long): String = when {

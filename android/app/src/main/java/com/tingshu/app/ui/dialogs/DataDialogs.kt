@@ -390,6 +390,18 @@ fun BackupDialog(vm: TingshuViewModel, onDismiss: () -> Unit) {
 }
 
 /** 暂停记录：点击续播、单条删除、清空。 */
+private data class PauseMarkGroup(
+    val bookId: String,
+    val title: String,
+    val marks: List<PauseMark>,
+)
+
+private data class PendingPauseClear(
+    val bookId: String?,
+    val label: String,
+    val count: Int,
+)
+
 @Composable
 fun PauseMarksDialog(
     vm: TingshuViewModel,
@@ -400,70 +412,226 @@ fun PauseMarksDialog(
     val all by vm.pauseMarks.collectAsStateWithLifecycle()
     val books by vm.books.collectAsStateWithLifecycle()
     val booksById = remember(books) { books.associateBy { it.id } }
-    val marks = remember(all, bookId) {
-        all.filter { bookId == null || it.bookId == bookId }.sortedByDescending { it.createdAt }
+
+    // 全局入口默认「按书籍」；书籍页传了 bookId 时仍直接进入本书的详细记录。
+    var grouped by remember { mutableStateOf(bookId == null) }
+    var activeBookId by remember { mutableStateOf<String?>(null) }
+    var pendingClear by remember { mutableStateOf<PendingPauseClear?>(null) }
+
+    val groups = remember(all, booksById) {
+        all.groupBy { it.bookId }
+            .map { (id, marks) ->
+                PauseMarkGroup(
+                    bookId = id,
+                    title = booksById[id]?.title
+                        ?: marks.firstOrNull()?.bookTitle?.takeIf { it.isNotBlank() }
+                        ?: "未知书籍",
+                    marks = marks,
+                )
+            }
+            .sortedByDescending { group -> group.marks.maxOf { it.createdAt } }
     }
-    var confirmClear by remember { mutableStateOf(false) }
+
+    val detailBookId = bookId ?: activeBookId
+    val marks = remember(all, detailBookId) {
+        all.filter { detailBookId == null || it.bookId == detailBookId }
+            .sortedByDescending { it.createdAt }
+    }
+    val showingGroups = bookId == null && grouped && activeBookId == null
+    val detailTitle = groups.firstOrNull { it.bookId == detailBookId }?.title
+        ?: booksById[detailBookId]?.title
+        ?: "未知书籍"
 
     TingshuDialog(
-        title = if (bookId == null) "暂停记录" else "本书的暂停记录",
+        title = when {
+            showingGroups -> "暂停记录 · 按书籍"
+            detailBookId != null -> "$detailTitle 的暂停记录"
+            else -> "暂停记录 · 详细记录"
+        },
         onDismiss = onDismiss,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = if (marks.isEmpty()) "还没有记录" else "${marks.size} 条记录",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.weight(1f))
-            if (marks.isNotEmpty()) {
-                TextButton(onClick = { confirmClear = true }) {
-                    Text("清空全部", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        if (showingGroups) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (groups.isEmpty()) "还没有记录" else "${groups.size} 本书 · ${all.size} 条",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                if (groups.isNotEmpty()) {
+                    TextButton(onClick = {
+                        pendingClear = PendingPauseClear(null, "全部书籍", all.size)
+                    }) {
+                        Text("清空全部", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+
+            if (groups.isEmpty()) {
+                Text(
+                    text = "播放中暂停、或开启定时，都会自动记一笔。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+            } else {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
+                    items(groups, key = { it.bookId }) { group ->
+                        PauseMarkGroupRow(
+                            title = group.title,
+                            count = group.marks.size,
+                            latest = group.marks.maxOf { it.createdAt },
+                            onOpen = { activeBookId = group.bookId },
+                            onDelete = {
+                                pendingClear = PendingPauseClear(
+                                    bookId = group.bookId,
+                                    label = group.title,
+                                    count = group.marks.size,
+                                )
+                            },
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                if (bookId == null && activeBookId != null) {
+                    TextButton(onClick = { activeBookId = null }) { Text("← 返回", fontSize = 12.sp) }
+                }
+                Text(
+                    text = if (marks.isEmpty()) "还没有记录" else "${marks.size} 条记录",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                if (marks.isNotEmpty()) {
+                    TextButton(onClick = {
+                        pendingClear = PendingPauseClear(
+                            bookId = detailBookId,
+                            label = if (detailBookId == null) "全部书籍" else detailTitle,
+                            count = marks.size,
+                        )
+                    }) {
+                        Text(
+                            if (detailBookId == null) "清空全部" else "清空本书",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            if (marks.isEmpty()) {
+                Text(
+                    text = "播放中暂停、或开启定时，都会自动记一笔。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+            } else {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
+                    items(marks, key = { it.id }) { mark ->
+                        PauseMarkRow(
+                            mark = mark,
+                            trackTitle = displayTrackTitle(mark, booksById),
+                            onClick = {
+                                vm.playFromMark(mark)
+                                onJump()
+                                onDismiss()
+                            },
+                            onDelete = { vm.deletePauseMark(mark.id) },
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
                 }
             }
         }
 
-        if (marks.isEmpty()) {
-            Text(
-                text = "播放中暂停、或开启定时，都会自动记一笔。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 16.dp),
-            )
-        } else {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
-                items(marks, key = { it.id }) { mark ->
-                    PauseMarkRow(
-                        mark = mark,
-                        trackTitle = displayTrackTitle(mark, booksById),
-                        onClick = {
-                            vm.playFromMark(mark)
-                            onJump()
-                            onDismiss()
-                        },
-                        onDelete = { vm.deletePauseMark(mark.id) },
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                }
+        // 只在全局入口显示两种视图切换；书籍页进入时固定是本书详细记录。
+        if (bookId == null && activeBookId == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = grouped,
+                    onClick = { grouped = true },
+                    label = { Text("按书籍", fontSize = 12.sp) },
+                )
+                FilterChip(
+                    selected = !grouped,
+                    onClick = { grouped = false },
+                    label = { Text("详细记录", fontSize = 12.sp) },
+                )
             }
         }
     }
 
-    if (confirmClear) {
+    pendingClear?.let { pending ->
         AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("清空这些暂停记录？") },
-            text = { Text("会删除 ${marks.size} 条记录，无法恢复。") },
+            onDismissRequest = { pendingClear = null },
+            title = { Text("清空暂停记录？") },
+            text = { Text("会删除${pending.label}的 ${pending.count} 条记录，无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmClear = false
-                    vm.clearPauseMarks(bookId)
+                    pendingClear = null
+                    vm.clearPauseMarks(pending.bookId)
+                    if (pending.bookId != null && activeBookId == pending.bookId) activeBookId = null
                 }) { Text("清空", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+                TextButton(onClick = { pendingClear = null }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun PauseMarkGroupRow(
+    title: String,
+    count: Int,
+    latest: Long,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Folder,
+            contentDescription = null,
+            tint = colors.primary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "$count 条 · 最近 ${stamp(latest)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = Icons.Rounded.DeleteOutline,
+                contentDescription = "清空这本书的记录",
+                tint = colors.outline,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

@@ -517,7 +517,7 @@ class TingshuViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setCacheAhead(value: Int) {
-        val next = value.coerceIn(1, 20)
+        val next = value.coerceIn(0, 20)
         cacheAhead.value = next
         prefs.cacheAhead = next
     }

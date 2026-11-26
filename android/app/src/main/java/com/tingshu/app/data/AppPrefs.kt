@@ -66,10 +66,10 @@ class AppPrefs(context: Context) {
         get() = prefs.getInt(KEY_MINI_ANIM, 500)
         set(value) = edit { putInt(KEY_MINI_ANIM, value.coerceIn(0, 3000)) }
 
-    /** 播放时向后预缓存的集数，1~20。 */
+    /** 播放时向后主动预缓存的集数，0~20；0 表示关闭预缓存。 */
     var cacheAhead: Int
-        get() = prefs.getInt(KEY_CACHE_AHEAD, 5).coerceIn(1, 20)
-        set(value) = edit { putInt(KEY_CACHE_AHEAD, value.coerceIn(1, 20)) }
+        get() = prefs.getInt(KEY_CACHE_AHEAD, 5).coerceIn(0, 20)
+        set(value) = edit { putInt(KEY_CACHE_AHEAD, value.coerceIn(0, 20)) }
 
     /** 当前章之前保留的缓存集数，0~20。 */
     var cacheBack: Int
